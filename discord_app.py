@@ -1,9 +1,9 @@
-"""Discord slash-command UI and per-server scheduler for 정훈봇."""
+"""Discord slash-command UI and shared scheduler for 정훈봇."""
 
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import logging
@@ -21,7 +21,8 @@ import bot as core
 
 LOG = logging.getLogger("compy_bot.discord")
 REGISTRY_PATH = core.data_dir() / "guilds.sqlite3"
-JOB_DIR = core.data_dir() / "guild-jobs"
+JOB_DIR = core.data_dir() / "guild-jobs"  # Legacy schedules, read only during migration.
+SHARED_JOB_PATH = core.data_dir() / "scheduled.sqlite3"
 PREVIEW_PATH = core.data_dir() / "previews.sqlite3"
 
 
@@ -164,15 +165,122 @@ class PreviewStore:
             )
 
 
-def job_store(guild_id: int) -> core.JobStore:
-    JOB_DIR.mkdir(parents=True, exist_ok=True)
-    return core.JobStore(JOB_DIR / f"{guild_id}.sqlite3")
+class BroadcastStore(core.JobStore):
+    """One generated job per slot, with a separate delivery state per server."""
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path)
+        with self.connection:
+            self.connection.execute(
+                """CREATE TABLE IF NOT EXISTS deliveries (
+                    day TEXT NOT NULL,
+                    slot TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    message_id TEXT,
+                    error TEXT,
+                    PRIMARY KEY (day, slot, guild_id)
+                )"""
+            )
+
+    def claim_delivery(self, day: str, slot: str, guild_id: int) -> bool:
+        with self.connection:
+            inserted = self.connection.execute(
+                "INSERT OR IGNORE INTO deliveries (day, slot, guild_id, status) "
+                "VALUES (?, ?, ?, 'posting')", (day, slot, str(guild_id)),
+            )
+            if inserted.rowcount:
+                return True
+            resumed = self.connection.execute(
+                "UPDATE deliveries SET status = 'posting' WHERE day = ? AND slot = ? "
+                "AND guild_id = ? AND status = 'paused'", (day, slot, str(guild_id)),
+            )
+            return resumed.rowcount == 1
+
+    def finish_delivery(
+        self, day: str, slot: str, guild_id: int, status: str,
+        message_id: str | None = None, error: str | None = None,
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE deliveries SET status = ?, message_id = ?, error = ? "
+                "WHERE day = ? AND slot = ? AND guild_id = ? AND status = 'posting'",
+                (status, message_id, error, day, slot, str(guild_id)),
+            )
+
+    def has_sent_delivery(self, day: str, slot: str) -> bool:
+        return self.connection.execute(
+            "SELECT 1 FROM deliveries WHERE day = ? AND slot = ? AND status = 'sent' LIMIT 1",
+            (day, slot),
+        ).fetchone() is not None
+
+    def reset_posting_delivery(self, day: str, slot: str, guild_id: int) -> bool:
+        with self.connection:
+            result = self.connection.execute(
+                "UPDATE deliveries SET status = 'paused', error = NULL "
+                "WHERE day = ? AND slot = ? AND guild_id = ? AND status = 'posting'",
+                (day, slot, str(guild_id)),
+            )
+        return result.rowcount == 1
 
 
-def upcoming_jobs(guild_id: int, settings: core.Settings) -> list[sqlite3.Row]:
+def shared_store() -> BroadcastStore:
+    return BroadcastStore(SHARED_JOB_PATH)
+
+
+def migrate_legacy_jobs(store: BroadcastStore) -> None:
+    """Preserve existing reservations and sent/uncertain posts on first upgrade."""
+    if store.connection.execute("SELECT 1 FROM jobs LIMIT 1").fetchone() or not JOB_DIR.is_dir():
+        return
+    paths = sorted(path for path in JOB_DIR.glob("*.sqlite3") if path.stem.isdecimal())
+    if not paths:
+        return
+    legacy_rows = []
+    for path in paths:
+        with closing(sqlite3.connect(path)) as legacy:
+            legacy.row_factory = sqlite3.Row
+            rows = legacy.execute("SELECT * FROM jobs").fetchall()
+            if rows:
+                legacy_rows.append((path, rows))
+    if not legacy_rows:
+        return
+    # Use a database with the newest reservation rather than an empty or stale
+    # server database. All future servers then follow that one shared clock.
+    _, rows = max(legacy_rows, key=lambda item: max(row["scheduled_at"] for row in item[1]))
+    with store.connection:
+        for row in rows:
+            image_path = row["image_path"]
+            status = row["status"]
+            if status in {"ready", "posting"} and (not image_path or not Path(image_path).is_file()):
+                status = "queued"
+            elif status == "posting":
+                status = "ready"
+            store.connection.execute(
+                """INSERT OR IGNORE INTO jobs
+                (day, slot, scheduled_at, window_spec, status, image_path, caption,
+                 dialogue, category, creative_mode, message_id, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (row["day"], row["slot"], row["scheduled_at"], row["window_spec"],
+                 status, image_path, row["caption"], row["dialogue"], row["category"],
+                 row["creative_mode"] if "creative_mode" in row.keys() else None,
+                 row["message_id"], row["error"]),
+            )
+        for path, legacy_jobs in legacy_rows:
+            for row in legacy_jobs:
+                if row["status"] in {"sent", "posting"}:
+                    store.connection.execute(
+                        "INSERT OR IGNORE INTO deliveries "
+                        "(day, slot, guild_id, status, message_id) VALUES (?, ?, ?, ?, ?)",
+                        (row["day"], row["slot"], path.stem, row["status"], row["message_id"]),
+                    )
+
+
+def upcoming_jobs(settings: core.Settings) -> list[sqlite3.Row]:
     now = datetime.now(settings.timezone)
-    store = job_store(guild_id)
+    store = shared_store()
     try:
+        migrate_legacy_jobs(store)
         rows: list[sqlite3.Row] = []
         for offset in (-1, 0, 1):
             day = now.date() + timedelta(days=offset)
@@ -191,65 +299,109 @@ def upcoming_jobs(guild_id: int, settings: core.Settings) -> list[sqlite3.Row]:
 
 
 def recent_jobs(guild_id: int) -> list[sqlite3.Row]:
-    store = job_store(guild_id)
+    store = shared_store()
     try:
         return list(store.connection.execute(
-            "SELECT * FROM jobs WHERE status IN ('sent', 'failed', 'posting') "
-            "ORDER BY scheduled_at DESC LIMIT 3"
+            "SELECT jobs.day, jobs.slot, jobs.scheduled_at, deliveries.status "
+            "FROM deliveries JOIN jobs USING (day, slot) WHERE deliveries.guild_id = ? "
+            "AND deliveries.status IN ('sent', 'posting') "
+            "ORDER BY jobs.scheduled_at DESC LIMIT 3", (str(guild_id),),
         ))
     finally:
         store.close()
 
 
-def process_guild(
-    registry: GuildRegistry, settings: core.Settings, guild_id: int,
-    previews: PreviewStore | None = None,
+def process_broadcast(
+    registry: GuildRegistry, settings: core.Settings, now: datetime | None = None,
+    generate=core.generate_meme, post=core.post_to_discord,
 ) -> None:
-    store = job_store(guild_id)
-
-    def generate(
-        _settings: core.Settings, slot: str, image_path: Path,
-        previous: list[str], scenario: core.Scenario,
-    ) -> str:
-        recent_previews = (previews or PreviewStore()).recent_dialogues(guild_id)
-        return core.generate_meme(
-            _settings, slot, image_path, [*recent_previews, *previous][:12], scenario,
-        )
-
-    def post(_settings: core.Settings, image_path: Path, slot: str, dialogue: str) -> str:
-        current = registry.get(guild_id)
-        if not current or not current["enabled"] or not current["channel_id"]:
-            raise core.PostingPaused("Server posting was paused")
-        destination = replace(
-            settings,
-            discord_bot_token=settings.discord_bot_token,
-            discord_channel_id=current["channel_id"],
-            discord_webhook_url=None,
-        )
-        return core.post_to_discord(destination, image_path, slot, dialogue)
-
+    local_now = (now or datetime.now(settings.timezone)).astimezone(settings.timezone)
+    store = shared_store()
     try:
+        migrate_legacy_jobs(store)
         store.recover_generation()
-        core.process_jobs(store, settings, datetime.now(settings.timezone), generate=generate, post=post)
+        previous_day = local_now.date() - timedelta(days=1)
+        store.ensure_day(previous_day, settings)
+        store.ensure_day(local_now.date(), settings)
+        active_guilds = registry.active_guilds()
+        for job in [*store.jobs_for_day(previous_day), *store.jobs_for_day(local_now.date())]:
+            scheduled = datetime.fromisoformat(job["scheduled_at"])
+            day, slot, status = job["day"], job["slot"], job["status"]
+            image_path = Path(job["image_path"]) if job["image_path"] else core.data_dir() / "output" / f"{day}-{slot}.png"
+            dialogue = job["dialogue"] or job["caption"] or "정훈봇 짤"
+            if status == "queued" and local_now > scheduled + core.MAX_LATE:
+                store.transition(day, slot, "queued", "skipped", error="Missed posting grace period")
+                continue
+            if status == "queued" and active_guilds and local_now >= scheduled - core.PREPARE_AHEAD:
+                if not store.transition(day, slot, "queued", "generating"):
+                    continue
+                try:
+                    scenario = core.choose_scenario(
+                        store.recent_categories(), job["creative_mode"] or "regular"
+                    )
+                    dialogue = generate(settings, slot, image_path, store.recent_dialogues(), scenario)
+                    store.transition(
+                        day, slot, "generating", "ready", image_path=str(image_path),
+                        dialogue=dialogue, category=scenario.key,
+                    )
+                    status = "ready"
+                except Exception as exc:
+                    LOG.exception("Failed to generate shared photo for %s %s", day, slot)
+                    store.transition(day, slot, "generating", "failed", error=str(exc)[:500])
+                    continue
+            if status != "ready" or local_now < scheduled:
+                continue
+            if local_now > scheduled + core.MAX_LATE:
+                final = "sent" if store.has_sent_delivery(day, slot) else "skipped"
+                store.transition(day, slot, "ready", final)
+                continue
+            for guild_id in active_guilds:
+                if not store.claim_delivery(day, slot, guild_id):
+                    continue
+                current = registry.get(guild_id)
+                if not current or not current["enabled"] or not current["channel_id"]:
+                    store.finish_delivery(day, slot, guild_id, "paused")
+                    continue
+                destination = replace(
+                    settings, discord_bot_token=settings.discord_bot_token,
+                    discord_channel_id=current["channel_id"], discord_webhook_url=None,
+                )
+                try:
+                    message_id = post(destination, image_path, slot, dialogue)
+                    store.finish_delivery(day, slot, guild_id, "sent", message_id)
+                except core.PostingPaused:
+                    store.finish_delivery(day, slot, guild_id, "paused")
+                except Exception as exc:
+                    # The network request may have succeeded. Do not retry this guild blindly.
+                    store.finish_delivery(day, slot, guild_id, "posting", error=type(exc).__name__)
+                    LOG.error(
+                        "Posting result is uncertain for %s %s guild %s (%s)",
+                        day, slot, guild_id, type(exc).__name__,
+                    )
     finally:
         store.close()
 
 
-def is_admin(interaction: discord.Interaction) -> bool:
+def is_operator(interaction: discord.Interaction, settings: core.Settings) -> bool:
     return bool(
         interaction.guild_id
-        and isinstance(interaction.user, discord.Member)
-        and interaction.user.guild_permissions.administrator
+        and (
+            interaction.user.id in settings.operator_ids
+            or (
+                isinstance(interaction.user, discord.Member)
+                and interaction.user.guild_permissions.administrator
+            )
+        )
     )
 
 
-async def reject_if_not_admin(interaction: discord.Interaction) -> bool:
-    if is_admin(interaction):
+async def reject_if_not_operator(interaction: discord.Interaction, settings: core.Settings) -> bool:
+    if is_operator(interaction, settings):
         return False
     if interaction.response.is_done():
-        await interaction.followup.send("서버 관리자만 정훈봇을 설정할 수 있어요.", ephemeral=True)
+        await interaction.followup.send("서버 관리자 또는 허용된 사용자만 정훈봇 명령을 사용할 수 있어요.", ephemeral=True)
     else:
-        await interaction.response.send_message("서버 관리자만 정훈봇을 설정할 수 있어요.", ephemeral=True)
+        await interaction.response.send_message("서버 관리자 또는 허용된 사용자만 정훈봇 명령을 사용할 수 있어요.", ephemeral=True)
     return True
 
 
@@ -259,7 +411,7 @@ def settings_embed(guild_id: int, registry: GuildRegistry, settings: core.Settin
     enabled = bool(saved and saved["enabled"])
     embed = discord.Embed(
         title="정훈봇 설정",
-        description="아래 채널 선택 메뉴에서 업로드할 채널을 고르세요. 선택하면 자동 발송이 켜집니다.",
+        description="아래 채널 선택 메뉴에서 업로드할 채널을 고르세요. 모든 서버가 같은 예약 사진을 받습니다.",
         color=discord.Color.green() if enabled else discord.Color.orange(),
     )
     embed.add_field(name="업로드 채널", value=f"<#{channel_id}>" if channel_id else "미등록", inline=True)
@@ -282,7 +434,7 @@ def status_embed(guild_id: int, registry: GuildRegistry, settings: core.Settings
     saved = registry.get(guild_id)
     channel_id = saved["channel_id"] if saved else None
     if channel_id:
-        jobs = upcoming_jobs(guild_id, settings)
+        jobs = upcoming_jobs(settings)
         lines = []
         for row in jobs:
             planned = datetime.fromisoformat(row["scheduled_at"])
@@ -290,7 +442,7 @@ def status_embed(guild_id: int, registry: GuildRegistry, settings: core.Settings
             mode = " · 레전드 도전" if row["creative_mode"] == "legend" else ""
             lines.append(f"{label}{mode} · {planned:%m/%d %H:%M} ({settings.timezone}) · <t:{int(planned.timestamp())}:R>")
         embed.add_field(name="다음 예약", value="\n".join(lines) if lines else "아직 없음", inline=False)
-        status_labels = {"sent": "발송 완료", "failed": "생성 실패", "posting": "게시 여부 확인 필요"}
+        status_labels = {"sent": "발송 완료", "posting": "게시 여부 확인 필요"}
         history = recent_jobs(guild_id)
         if history:
             embed.add_field(
@@ -316,7 +468,7 @@ class ChannelPicker(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         panel: SettingsView = self.view  # type: ignore[assignment]
-        if await reject_if_not_admin(interaction):
+        if await reject_if_not_operator(interaction, panel.settings):
             return
         assert interaction.guild is not None
         selected = interaction.guild.get_channel(self.values[0].id)
@@ -351,9 +503,9 @@ class SettingsView(discord.ui.View):
         self.toggle.style = discord.ButtonStyle.danger if enabled else discord.ButtonStyle.success  # type: ignore[attr-defined]
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.owner_id and is_admin(interaction):
+        if interaction.user.id == self.owner_id and is_operator(interaction, self.settings):
             return True
-        await interaction.response.send_message("이 설정 화면은 호출한 서버 관리자만 사용할 수 있어요.", ephemeral=True)
+        await interaction.response.send_message("이 설정 화면은 호출한 관리자 또는 허용 사용자만 사용할 수 있어요.", ephemeral=True)
         return False
 
     @discord.ui.button(label="자동 발송 켜기/끄기", style=discord.ButtonStyle.primary, row=1)
@@ -410,9 +562,9 @@ class PreviewView(discord.ui.View):
         self.add_item(PublishButton(preview_id))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.owner_id and interaction.guild_id == self.guild_id and is_admin(interaction):
+        if interaction.user.id == self.owner_id and interaction.guild_id == self.guild_id and is_operator(interaction, self.settings):
             return True
-        await interaction.response.send_message("미리보기를 만든 서버 관리자만 게시할 수 있어요.", ephemeral=True)
+        await interaction.response.send_message("미리보기를 만든 관리자 또는 허용 사용자만 게시할 수 있어요.", ephemeral=True)
         return False
 
     async def publish(self, interaction: discord.Interaction, button: PublishButton) -> None:
@@ -483,7 +635,6 @@ class JunghoonCommands(app_commands.Group):
             name="정훈봇",
             description="정훈봇 설정, 상태, 미리보기",
             guild_only=True,
-            default_permissions=discord.Permissions(administrator=True),
         )
         self.registry = registry
         self.previews = previews
@@ -492,7 +643,7 @@ class JunghoonCommands(app_commands.Group):
 
     @app_commands.command(name="설정", description="업로드 채널을 선택하고 자동 발송을 관리합니다")
     async def configure(self, interaction: discord.Interaction) -> None:
-        if await reject_if_not_admin(interaction):
+        if await reject_if_not_operator(interaction, self.settings):
             return
         assert interaction.guild_id is not None
         await interaction.response.send_message(
@@ -503,7 +654,7 @@ class JunghoonCommands(app_commands.Group):
 
     @app_commands.command(name="상태", description="업로드 채널, 다음 예약, 최근 발송을 확인합니다")
     async def status(self, interaction: discord.Interaction) -> None:
-        if await reject_if_not_admin(interaction):
+        if await reject_if_not_operator(interaction, self.settings):
             return
         assert interaction.guild_id is not None
         await interaction.response.send_message(
@@ -543,7 +694,7 @@ class JunghoonCommands(app_commands.Group):
         이슈: app_commands.Choice[str] | None = None,
         목표: app_commands.Choice[str] | None = None,
     ) -> None:
-        if await reject_if_not_admin(interaction):
+        if await reject_if_not_operator(interaction, self.settings):
             return
         assert interaction.guild_id is not None
         guild_id = interaction.guild_id
@@ -565,8 +716,9 @@ class JunghoonCommands(app_commands.Group):
             style = 분위기.value if 분위기 else "auto"
             trend_mode = 이슈.value if 이슈 else "auto"
             try:
-                store = job_store(guild_id)
+                store = shared_store()
                 try:
+                    migrate_legacy_jobs(store)
                     mode = 목표.value if 목표 else "regular"
                     scenario = replace(selected, mode=mode) if selected else core.choose_scenario(store.recent_categories(), mode)
                     previous = [
@@ -636,11 +788,10 @@ class JunghoonClient(discord.Client):
 
     @tasks.loop(seconds=30)
     async def scheduler(self) -> None:
-        for guild_id in self.registry.active_guilds():
-            try:
-                await asyncio.to_thread(process_guild, self.registry, self.settings, guild_id, self.previews)
-            except Exception:
-                LOG.exception("Scheduler error for guild %s", guild_id)
+        try:
+            await asyncio.to_thread(process_broadcast, self.registry, self.settings)
+        except Exception:
+            LOG.exception("Shared scheduler error")
 
     @scheduler.before_loop
     async def before_scheduler(self) -> None:
@@ -658,12 +809,12 @@ def print_plan(settings: core.Settings) -> None:
     registry = GuildRegistry()
     configured = registry.configured_guilds()
     if not configured:
-        print("No configured servers. An administrator can register a channel with /정훈봇 설정.")
+        print("No configured servers. An admin or allowed operator can register a channel with /정훈봇 설정.")
+    for job in upcoming_jobs(settings):
+        print(f"Shared {job['slot']}: {job['scheduled_at']} [{job['status']}, {job['creative_mode'] or 'regular'}]")
     for guild_id in configured:
         saved = registry.get(guild_id)
         state = "enabled" if saved["enabled"] else "paused"
         print(f"Server {guild_id} -> channel {saved['channel_id']} [{state}]")
-        for job in upcoming_jobs(guild_id, settings):
-            print(f"  {job['slot']}: {job['scheduled_at']} [{job['status']}, {job['creative_mode'] or 'regular'}]")
         for job in recent_jobs(guild_id):
             print(f"  recent {job['day']} {job['slot']}: [{job['status']}]")

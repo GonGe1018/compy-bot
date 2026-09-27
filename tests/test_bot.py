@@ -60,6 +60,13 @@ class ScheduleTests(unittest.TestCase):
         with patch.dict(os.environ, {"BOT_DATA_DIR": str(target)}):
             self.assertEqual(bot.data_dir(), target.resolve())
 
+    def test_operator_ids_can_be_extended_without_admin_permissions(self):
+        with patch.object(bot, "ROOT", self.root), patch.dict(
+            os.environ, {"BOT_OPERATOR_IDS": "277763680022560768, 123456789"}
+        ):
+            settings = bot.load_settings()
+        self.assertEqual(settings.operator_ids, frozenset({277763680022560768, 123456789}))
+
     def test_changed_window_replans_existing_unsent_job(self):
         day = date(2026, 9, 28)
         old_settings = replace(

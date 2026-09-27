@@ -221,6 +221,7 @@ class Settings:
     discord_bot_token: str | None
     discord_channel_id: str | None
     discord_webhook_url: str | None
+    operator_ids: frozenset[int] = frozenset({277763680022560768})
 
 
 def parse_window(name: str, value: str) -> Window:
@@ -244,6 +245,10 @@ def load_settings() -> Settings:
     quality = os.getenv("IMAGE_QUALITY", "low")
     if quality not in {"low", "medium", "high", "auto"}:
         raise ValueError("IMAGE_QUALITY must be low, medium, high, or auto")
+    operator_text = os.getenv("BOT_OPERATOR_IDS", "277763680022560768")
+    operator_parts = [part.strip() for part in operator_text.split(",") if part.strip()]
+    if any(not part.isdecimal() for part in operator_parts):
+        raise ValueError("BOT_OPERATOR_IDS must be comma-separated numeric Discord user IDs")
     return Settings(
         timezone=ZoneInfo(os.getenv("TIMEZONE", "Asia/Seoul")),
         windows=(
@@ -259,6 +264,7 @@ def load_settings() -> Settings:
         discord_bot_token=os.getenv("DISCORD_BOT_TOKEN"),
         discord_channel_id=os.getenv("DISCORD_CHANNEL_ID"),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
+        operator_ids=frozenset(int(part) for part in operator_parts),
     )
 
 
@@ -717,7 +723,6 @@ def main() -> None:
     retry_parser.add_argument("day", help="YYYY-MM-DD")
     retry_parser.add_argument("slot", choices=("dawn", "lunch"))
     retry_generation_parser = subcommands.add_parser("retry-generation", help="Retry a failed image generation")
-    retry_generation_parser.add_argument("guild_id", help="Discord server ID")
     retry_generation_parser.add_argument("day", help="YYYY-MM-DD")
     retry_generation_parser.add_argument("slot", choices=("dawn", "lunch"))
     args = parser.parse_args()
@@ -745,23 +750,23 @@ def main() -> None:
             message_id = post_to_discord(settings, image_path, args.slot, dialogue)
             print(f"Posted Discord message {message_id}")
     elif args.command == "retry-post":
-        from discord_app import job_store
+        from discord_app import shared_store
 
-        store = job_store(int(args.guild_id))
+        store = shared_store()
         try:
-            if not store.reset_posting(args.day, args.slot):
-                raise SystemExit("Job is not in posting state; no retry was scheduled")
-            print("Reset to ready; start 'run' to post it if still within the grace period")
+            if not store.reset_posting_delivery(args.day, args.slot, int(args.guild_id)):
+                raise SystemExit("This server's delivery is not in posting state; no retry was scheduled")
+            print("Reset this server's delivery; the running scheduler will retry within the grace period")
         finally:
             store.close()
     elif args.command == "retry-generation":
-        from discord_app import job_store
+        from discord_app import shared_store
 
-        store = job_store(int(args.guild_id))
+        store = shared_store()
         try:
             if not store.transition(args.day, args.slot, "failed", "queued", error=None):
                 raise SystemExit("Job is not in failed state; no retry was scheduled")
-            print("Reset to queued; start 'run' to regenerate it if still within the grace period")
+            print("Reset the shared job to queued; the running scheduler will regenerate within the grace period")
         finally:
             store.close()
 

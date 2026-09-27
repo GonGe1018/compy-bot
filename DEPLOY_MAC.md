@@ -12,9 +12,10 @@ Docker Desktop과 Docker Compose를 설치한 맥북에서 한 컨테이너로 �
 | `photos/` 안의 사진 | `photos/` | 인물 참조 사진 |
 | `persona.txt` | `data/persona.txt` | 정훈 말투 요약 |
 | `guilds.sqlite3` | `data/guilds.sqlite3` | 서버별 채널 설정 |
-| `guild-jobs/` 안의 DB | `data/guild-jobs/` | 이미 정해진 발송 시각과 내역 |
+| `guild-jobs/` 안의 DB | `data/guild-jobs/` | 이전 버전 예약 이전용. 새 버전은 최초 실행 때 공통 예약으로 이전 |
+| `scheduled.sqlite3` | `data/scheduled.sqlite3` | 새 버전의 공통 예약, 생성 결과, 서버별 게시 내역 |
 
-복사 전에 맥북에서 `mkdir -p photos data/guild-jobs data/output`을 실행합니다. `previews.sqlite3`와 이전 `output/`은 새 배포에 필요하지 않습니다. 이전 미리보기 버튼은 새로 만들어야 합니다. 복사한 `guild-jobs/` 안에 `ready` 또는 `posting` 회차가 있다면 기존 호스트에서 해당 회차의 채널 게시 여부를 확인한 뒤 전환하세요.
+복사 전에 맥북에서 `mkdir -p photos data/guild-jobs data/output`을 실행합니다. 새 설치라면 `guild-jobs/`와 `scheduled.sqlite3`는 직접 만들 필요가 없습니다. 이전 미리보기 버튼은 새로 만들어야 합니다. 기존 예약에 `ready` 회차가 있다면 해당 생성 이미지를 `output/`에 함께 보관해야 재생성 없이 공유할 수 있습니다. `posting` 회차는 기존 채널 게시 여부를 확인한 뒤 전환하세요.
 
 ## 2. 빌드와 실행
 
@@ -29,7 +30,7 @@ docker compose logs --tail=50 bot
 docker compose exec bot python bot.py plan
 ```
 
-로그에 `Logged in as 정훈봇`이 보이고 `plan`에 등록된 서버와 예약 시각이 나오면 연결된 상태입니다. 코드나 `uv.lock`을 갱신한 뒤에는 `docker compose up -d --build`를 실행합니다. 멈출 때는 `docker compose stop`을 사용합니다. `data/`와 `photos/`는 호스트 폴더에 남습니다.
+로그에 `Logged in as 정훈봇`이 보이고 `plan`에 공통 예약 시각과 등록된 서버가 나오면 연결된 상태입니다. 코드나 `uv.lock`을 갱신한 뒤에는 `docker compose up -d --build`를 실행합니다. 멈출 때는 `docker compose stop`을 사용합니다. `data/`와 `photos/`는 호스트 폴더에 남습니다.
 
 ## 3. 맥북 전원 설정
 

@@ -50,7 +50,7 @@ class GuildConfigurationTests(unittest.TestCase):
         group = client.tree.get_commands()[0]
         self.assertEqual(group.name, "정훈봇")
         self.assertEqual([command.name for command in group.commands], ["설정", "상태", "미리보기"])
-        self.assertTrue(group.default_permissions.administrator)
+        self.assertIsNone(group.default_permissions)
         self.assertEqual(
             [parameter.name for parameter in group.get_command("미리보기").parameters],
             ["유형", "분위기", "시간대", "이슈", "목표"],
@@ -58,6 +58,18 @@ class GuildConfigurationTests(unittest.TestCase):
         panel = discord_app.SettingsView(self.registry, self.settings, owner_id=1, guild_id=101)
         self.assertTrue(any(isinstance(item, discord_app.ChannelPicker) for item in panel.children))
         self.assertEqual(sum(getattr(item, "label", None) is not None for item in panel.children), 2)
+
+    def test_whitelisted_user_can_use_commands_without_admin_permission(self):
+        allowed = SimpleNamespace(guild_id=101, user=SimpleNamespace(id=277763680022560768))
+        denied = SimpleNamespace(guild_id=101, user=SimpleNamespace(id=999))
+        self.assertTrue(discord_app.is_operator(allowed, self.settings))
+        self.assertFalse(discord_app.is_operator(denied, self.settings))
+        self.assertFalse(discord_app.is_operator(SimpleNamespace(guild_id=None, user=allowed.user), self.settings))
+        panel = discord_app.SettingsView(self.registry, self.settings, owner_id=allowed.user.id, guild_id=101)
+        allowed.response = SimpleNamespace(send_message=AsyncMock())
+        denied.response = SimpleNamespace(send_message=AsyncMock())
+        self.assertTrue(asyncio.run(panel.interaction_check(allowed)))
+        self.assertFalse(asyncio.run(panel.interaction_check(denied)))
 
     def test_preview_button_survives_reload_and_posts_only_once(self):
         image_path = self.root / "preview.png"
@@ -125,8 +137,9 @@ class GuildConfigurationTests(unittest.TestCase):
             return "이거 봐 ㅋㅋ"
 
         async def run_preview():
-            with patch.object(discord_app, "reject_if_not_admin", new=AsyncMock(return_value=False)), \
-                    patch.object(discord_app, "JOB_DIR", self.root / "jobs"), \
+            with patch.object(discord_app, "reject_if_not_operator", new=AsyncMock(return_value=False)), \
+                    patch.object(discord_app, "SHARED_JOB_PATH", self.root / "scheduled.sqlite3"), \
+                    patch.object(discord_app, "JOB_DIR", self.root / "legacy"), \
                     patch.object(discord_app.core, "ROOT", self.root), \
                     patch.object(discord_app.core, "generate_meme", side_effect=generate):
                 await group.get_command("미리보기").callback(
@@ -145,51 +158,157 @@ class GuildConfigurationTests(unittest.TestCase):
         self.assertEqual(self.previews.get(sent["view"].preview_id)["state"], "ready")
         sent["file"].close()
 
-    def test_two_servers_keep_independent_schedules(self):
-        with patch.object(discord_app, "JOB_DIR", self.root / "jobs"):
-            first = discord_app.job_store(101)
-            second = discord_app.job_store(202)
-            try:
-                day = datetime.now(self.settings.timezone).date()
-                first.ensure_day(day, self.settings)
-                second.ensure_day(day, self.settings)
-                first.transition(day.isoformat(), "lunch", "queued", "sent")
-                self.assertEqual(len(first.jobs_for_day(day)), 2)
-                self.assertEqual(len(second.jobs_for_day(day)), 2)
-                first_lunch = next(row for row in first.jobs_for_day(day) if row["slot"] == "lunch")
-                second_lunch = next(row for row in second.jobs_for_day(day) if row["slot"] == "lunch")
-                self.assertEqual(first_lunch["status"], "sent")
-                self.assertEqual(second_lunch["status"], "queued")
-            finally:
-                first.close()
-                second.close()
-
-    def test_pausing_during_post_keeps_job_unsent(self):
+    def test_two_servers_share_one_generation_and_schedule(self):
         self.registry.set_channel(101, 1001)
-        with patch.object(discord_app, "JOB_DIR", self.root / "jobs"):
-            store = discord_app.job_store(101)
+        self.registry.set_channel(202, 2002)
+        now = datetime(2026, 9, 28, 12, 0, tzinfo=self.settings.timezone)
+        with patch.object(discord_app, "SHARED_JOB_PATH", self.root / "scheduled.sqlite3"), \
+                patch.object(discord_app, "JOB_DIR", self.root / "legacy"), \
+                patch.object(bot, "data_dir", return_value=self.root):
+            store = discord_app.shared_store()
             try:
-                now = datetime(2026, 9, 28, 12, 0, tzinfo=self.settings.timezone)
                 store.ensure_day(now.date(), self.settings)
                 with store.connection:
                     store.connection.execute(
                         "UPDATE jobs SET scheduled_at = ? WHERE day = ? AND slot = 'lunch'",
-                        ((now - timedelta(minutes=1)).isoformat(), now.date().isoformat()),
+                        (now.isoformat(), now.date().isoformat()),
                     )
+            finally:
+                store.close()
+            calls = {"generate": 0, "posts": []}
 
-                def generate(_settings, _slot, path, _previous, _scenario):
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(b"fake image")
-                    return "정훈 대사"
+            def generate(_settings, _slot, path, _previous, _scenario):
+                calls["generate"] += 1
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"shared image")
+                return "정훈 대사"
 
-                def pause_before_post(_settings, _path, _slot, _dialogue):
-                    self.registry.set_enabled(101, False)
-                    raise bot.PostingPaused()
+            def post(destination, path, _slot, dialogue):
+                self.assertEqual(path.read_bytes(), b"shared image")
+                self.assertEqual(dialogue, "정훈 대사")
+                calls["posts"].append(destination.discord_channel_id)
+                return f"message-{destination.discord_channel_id}"
 
-                with patch.object(bot, "ROOT", self.root):
-                    bot.process_jobs(store, self.settings, now, generate, pause_before_post)
+            discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
+            discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
+            self.assertEqual(calls, {"generate": 1, "posts": ["1001", "2002"]})
+            store = discord_app.shared_store()
+            try:
                 lunch = next(row for row in store.jobs_for_day(now.date()) if row["slot"] == "lunch")
                 self.assertEqual(lunch["status"], "ready")
+                self.assertEqual(lunch["dialogue"], "정훈 대사")
+                deliveries = store.connection.execute(
+                    "SELECT guild_id, status FROM deliveries WHERE day = ? AND slot = 'lunch' ORDER BY guild_id",
+                    (now.date().isoformat(),),
+                ).fetchall()
+                self.assertEqual([(row[0], row[1]) for row in deliveries], [("101", "sent"), ("202", "sent")])
+            finally:
+                store.close()
+
+    def test_failed_delivery_does_not_regenerate_or_block_another_server(self):
+        self.registry.set_channel(101, 1001)
+        self.registry.set_channel(202, 2002)
+        now = datetime(2026, 9, 28, 12, 0, tzinfo=self.settings.timezone)
+        with patch.object(discord_app, "SHARED_JOB_PATH", self.root / "scheduled.sqlite3"), \
+                patch.object(discord_app, "JOB_DIR", self.root / "legacy"), \
+                patch.object(bot, "data_dir", return_value=self.root):
+            store = discord_app.shared_store()
+            try:
+                store.ensure_day(now.date(), self.settings)
+                with store.connection:
+                    store.connection.execute(
+                        "UPDATE jobs SET scheduled_at = ? WHERE day = ? AND slot = 'lunch'",
+                        (now.isoformat(), now.date().isoformat()),
+                    )
+            finally:
+                store.close()
+
+            attempts = []
+
+            def generate(_settings, _slot, path, _previous, _scenario):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"shared image")
+                return "정훈 대사"
+
+            def post(destination, _path, _slot, _dialogue):
+                attempts.append(destination.discord_channel_id)
+                if destination.discord_channel_id == "1001":
+                    raise TimeoutError("Response lost")
+                return "message-2"
+
+            discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
+            discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
+            self.assertEqual(attempts, ["1001", "2002"])
+            store = discord_app.shared_store()
+            try:
+                deliveries = store.connection.execute(
+                    "SELECT guild_id, status FROM deliveries WHERE day = ? AND slot = 'lunch' ORDER BY guild_id",
+                    (now.date().isoformat(),),
+                ).fetchall()
+                self.assertEqual([(row[0], row[1]) for row in deliveries], [("101", "posting"), ("202", "sent")])
+            finally:
+                store.close()
+
+    def test_legacy_reservation_and_sent_server_migrate_without_duplicate(self):
+        self.registry.set_channel(101, 1001)
+        self.registry.set_channel(202, 2002)
+        now = datetime(2026, 9, 28, 12, 0, tzinfo=self.settings.timezone)
+        legacy_dir = self.root / "guild-jobs"
+        legacy_dir.mkdir()
+        image_path = self.root / "already-generated.png"
+        image_path.write_bytes(b"old image")
+        first = bot.JobStore(legacy_dir / "101.sqlite3")
+        second = bot.JobStore(legacy_dir / "202.sqlite3")
+        try:
+            for store in (first, second):
+                store.ensure_day(now.date(), self.settings)
+            with first.connection:
+                first.connection.execute(
+                    "UPDATE jobs SET scheduled_at = ? WHERE day = ? AND slot = 'lunch'",
+                    (now.isoformat(), now.date().isoformat()),
+                )
+                first.connection.execute(
+                    "UPDATE jobs SET scheduled_at = ? WHERE day = ? AND slot = 'dawn'",
+                    ((now + timedelta(hours=12)).isoformat(), now.date().isoformat()),
+                )
+            with second.connection:
+                second.connection.execute(
+                    "UPDATE jobs SET scheduled_at = ? WHERE day = ? AND slot = 'dawn'",
+                    ((now + timedelta(hours=11)).isoformat(), now.date().isoformat()),
+                )
+            first.transition(
+                now.date().isoformat(), "lunch", "queued", "ready",
+                image_path=str(image_path), dialogue="공유 대사", category="expression",
+            )
+            second.transition(now.date().isoformat(), "lunch", "queued", "sent", message_id="old-202")
+        finally:
+            first.close()
+            second.close()
+        with patch.object(discord_app, "SHARED_JOB_PATH", self.root / "scheduled.sqlite3"), \
+                patch.object(discord_app, "JOB_DIR", legacy_dir), \
+                patch.object(bot, "data_dir", return_value=self.root):
+            posts = []
+
+            def post(destination, path, _slot, dialogue):
+                posts.append(destination.discord_channel_id)
+                self.assertEqual(path.read_bytes(), b"old image")
+                self.assertEqual(dialogue, "공유 대사")
+                return "new-101"
+
+            def should_not_generate(*_args):
+                self.fail("A ready legacy image must be reused")
+
+            discord_app.process_broadcast(self.registry, self.settings, now, should_not_generate, post)
+            self.assertEqual(posts, ["1001"])
+            store = discord_app.shared_store()
+            try:
+                lunch = next(row for row in store.jobs_for_day(now.date()) if row["slot"] == "lunch")
+                self.assertEqual(lunch["scheduled_at"], now.isoformat())
+                deliveries = store.connection.execute(
+                    "SELECT guild_id, status FROM deliveries WHERE day = ? AND slot = 'lunch' ORDER BY guild_id",
+                    (now.date().isoformat(),),
+                ).fetchall()
+                self.assertEqual([(row[0], row[1]) for row in deliveries], [("101", "sent"), ("202", "sent")])
             finally:
                 store.close()
 
