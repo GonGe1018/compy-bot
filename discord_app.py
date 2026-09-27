@@ -761,6 +761,7 @@ class JunghoonClient(discord.Client):
         self.previews = previews or PreviewStore()
         self.tree = app_commands.CommandTree(self)
         self.tree.add_command(JunghoonCommands(registry, self.previews, settings))
+        self._synced_guilds: set[int] = set()
 
     async def setup_hook(self) -> None:
         for row in self.previews.recent():
@@ -777,8 +778,26 @@ class JunghoonClient(discord.Client):
             "Logged in as %s; joined %s servers, automatic posting enabled in %s",
             self.user, len(self.guilds), len(self.registry.active_guilds()),
         )
+        for guild in self.guilds:
+            await self.sync_guild_commands(guild)
+
+    async def sync_guild_commands(self, guild: discord.Guild) -> None:
+        if guild.id in self._synced_guilds:
+            return
+        self.tree.copy_global_to(guild=guild)
+        try:
+            commands = await self.tree.sync(guild=guild)
+        except discord.HTTPException:
+            LOG.exception("Could not sync slash commands for guild %s", guild.id)
+        else:
+            self._synced_guilds.add(guild.id)
+            LOG.info("Synced %s slash commands for guild %s", len(commands), guild.id)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        await self.sync_guild_commands(guild)
 
     async def on_guild_remove(self, guild: discord.Guild) -> None:
+        self._synced_guilds.discard(guild.id)
         self.registry.set_enabled(guild.id, False)
 
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:

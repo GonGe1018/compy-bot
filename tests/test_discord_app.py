@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import bot
+import discord
 import discord_app
 
 
@@ -115,6 +116,20 @@ class GuildConfigurationTests(unittest.TestCase):
             isinstance(view, discord_app.PreviewView) and view.preview_id == "preview456"
             for view in client.persistent_views
         ))
+
+    def test_guild_slash_commands_are_synced_once(self):
+        client = discord_app.JunghoonClient(self.settings, self.registry, self.previews)
+        guild = discord.Object(id=1139034116138991616)
+
+        async def sync_twice():
+            with patch.object(client.tree, "sync", new=AsyncMock(return_value=[object()])) as sync:
+                await client.sync_guild_commands(guild)
+                await client.sync_guild_commands(guild)
+                self.assertEqual(sync.await_count, 1)
+                self.assertEqual(sync.await_args.kwargs["guild"], guild)
+
+        asyncio.run(sync_twice())
+        self.assertEqual([command.name for command in client.tree.get_commands(guild=guild)], ["정훈봇"])
 
     def test_preview_command_uses_selected_category_without_network(self):
         self.previews.add("earlier", 101, 77, self.root / "earlier.png", "아 뭐야", "lunch")
