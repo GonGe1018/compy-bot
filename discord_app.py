@@ -246,7 +246,7 @@ def settings_embed(guild_id: int, registry: GuildRegistry, settings: core.Settin
     embed.add_field(name="참조 사진", value=f"매번 {settings.photo_count}장", inline=True)
     embed.add_field(
         name="시간대 · 발송 구간",
-        value=f"{settings.timezone}\n밤 {core.window_spec(settings.windows[0])} · 점심 {core.window_spec(settings.windows[1])}",
+        value=f"{settings.timezone}\n밤 {core.window_spec(settings.windows[0])} · 낮 {core.window_spec(settings.windows[1])}",
         inline=False,
     )
     if not enabled and channel_id:
@@ -265,7 +265,7 @@ def status_embed(guild_id: int, registry: GuildRegistry, settings: core.Settings
         lines = []
         for row in jobs:
             planned = datetime.fromisoformat(row["scheduled_at"])
-            label = "밤" if row["slot"] == "dawn" else "점심"
+            label = "밤" if row["slot"] == "dawn" else "낮"
             lines.append(f"{label} · {planned:%m/%d %H:%M} ({settings.timezone}) · <t:{int(planned.timestamp())}:R>")
         embed.add_field(name="다음 예약", value="\n".join(lines) if lines else "아직 없음", inline=False)
         status_labels = {"sent": "발송 완료", "failed": "생성 실패", "posting": "게시 여부 확인 필요"}
@@ -274,7 +274,7 @@ def status_embed(guild_id: int, registry: GuildRegistry, settings: core.Settings
             embed.add_field(
                 name="최근 회차",
                 value="\n".join(
-                    f"{row['day']} {'밤' if row['slot'] == 'dawn' else '점심'} · {status_labels[row['status']]}"
+                    f"{row['day']} {'밤' if row['slot'] == 'dawn' else '낮'} · {status_labels[row['status']]}"
                     for row in history
                 ),
                 inline=False,
@@ -491,7 +491,7 @@ class JunghoonCommands(app_commands.Group):
 
     @app_commands.command(name="미리보기", description="짤을 한 장 생성합니다 · OpenAI API 비용 발생")
     @app_commands.describe(유형="비워두면 무작위 유형으로 생성합니다")
-    @app_commands.describe(분위기="사진의 과장 정도", 시간대="대사의 시간대", 이슈="최근 밈 패러디 후보를 확인할지")
+    @app_commands.describe(분위기="사진의 과장 정도", 시간대="사진의 낮·밤 조명만 선택", 이슈="최근 밈 패러디 후보를 확인할지")
     @app_commands.autocomplete(유형=scenario_autocomplete)
     @app_commands.choices(
         분위기=[
@@ -501,8 +501,8 @@ class JunghoonCommands(app_commands.Group):
             app_commands.Choice(name="초현실적인 사진", value="surreal"),
         ],
         시간대=[
-            app_commands.Choice(name="점심", value="lunch"),
-            app_commands.Choice(name="새벽", value="dawn"),
+            app_commands.Choice(name="낮 (11:30~13:30)", value="lunch"),
+            app_commands.Choice(name="밤 (22:00~04:00)", value="dawn"),
         ],
         이슈=[
             app_commands.Choice(name="자동", value="auto"),

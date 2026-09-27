@@ -58,7 +58,7 @@ class Scenario:
 # The category is the main source of the joke; composition, mood, and camera angle
 # can still vary within each category.
 SCENARIOS = (
-    Scenario("daily", "소소한 일상", "A believable meal, errand, walk, hobby, or small win worth showing friends."),
+    Scenario("daily", "소소한 일상", "A believable errand, walk, hobby, commute, desk update, or small win worth showing friends."),
     Scenario("minor_mishap", "작은 사고", "A harmless everyday mistake or near miss caught at the funniest moment."),
     Scenario("deadpan_absurd", "평범한 표정, 황당한 상황", "Jeonghun keeps a completely straight face while one clearly absurd event unfolds around him."),
     Scenario("reaction_remix", "표정 재해석", "A large, unmistakable facial reaction becomes funny because of one newly imagined event in the same frame; make the cause of the reaction visible."),
@@ -110,6 +110,17 @@ VISUAL_STYLES = {
     "natural": "Keep it like a believable casual photo with one small funny detail.",
     "bold": "Make the reaction or visual contrast immediately obvious and deliberately funny.",
     "surreal": "Allow one impossible but coherent element while keeping his identity recognizable.",
+}
+TIME_CONTEXT = {
+    "lunch": (
+        "Daytime posting window (11:30-13:30). If the outdoors or a window is visible, "
+        "use plausible daytime light; overcast weather and ordinary indoor light are fine."
+    ),
+    "dawn": (
+        "Night posting window (22:00-04:00). If the outdoors or a window is visible, "
+        "use plausible darkness or night lighting rather than bright daytime sunshine. "
+        "Bright indoor lighting is fine."
+    ),
 }
 
 
@@ -336,7 +347,8 @@ def create_idea(
     client: object, settings: Settings, slot: str, previous: list[str], scenario: Scenario,
     style: str = "auto", trend_mode: str = "auto",
 ) -> tuple[str, str]:
-    slot_name = "새벽" if slot == "dawn" else "점심"
+    if slot not in TIME_CONTEXT:
+        raise ValueError("Invalid posting window")
     voice_path = data_dir() / "persona.txt"
     voice_notes = voice_path.read_text(encoding="utf-8")[:4000] if voice_path.is_file() else ""
     if style not in VISUAL_STYLES or trend_mode not in {"auto", "off", "try"}:
@@ -371,6 +383,13 @@ def create_idea(
             "Korean first-person dialogue message (roughly 10-55 characters) and one English "
             "image-edit prompt. The message and photo must describe the same moment. "
             "The scene may be ordinary, ridiculous, cinematic, or surreal according to its category. "
+            "Choose the scene from the category, not from the posting window. The posting "
+            "window only keeps visible daylight or darkness plausible; it does not prescribe "
+            "an activity, setting, prop, or dialogue topic. A midday post is not a request "
+            "to eat lunch, and a night post is not a request to sleep. Do not default to "
+            "restaurants, meals, food props, beds, or pajamas because of the time label. "
+            "Food can be the main joke when the food category is selected. Do not mention "
+            "the posting time in the dialogue unless the chosen scene naturally calls for it. "
             "Aim for the kind of photo close friends immediately laugh at and remix: his face "
             "is recognizable at thumbnail size, his expression or deadpan attitude is strong, "
             "and one obvious visual event explains why this photo is funny. A dramatic reaction "
@@ -394,7 +413,8 @@ def create_idea(
             "Avoid humiliation, defamation, sexual content, and violence."
         ),
         input=(
-            f"Time: {slot_name}. Main scenario category: {scenario.name}. "
+            f"Posting window (lighting context only): {TIME_CONTEXT[slot]} "
+            f"Main scenario category: {scenario.name}. "
             f"Creative direction: {scenario.direction} "
             f"Visual intensity: {VISUAL_STYLES[style]} "
             f"Avoid repeating these recent messages: {json.dumps(previous, ensure_ascii=False)}. "
