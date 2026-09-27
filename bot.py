@@ -112,6 +112,21 @@ VISUAL_STYLES = {
     "bold": "Make the reaction or visual contrast immediately obvious and deliberately funny.",
     "surreal": "Allow one impossible but coherent element while keeping his identity recognizable.",
 }
+FRIEND_PHOTO_STYLE = (
+    "Aim for the kind of odd photo his friends would save from a group chat: a real-looking "
+    "phone snapshot of Jeonghun, with an immediately readable visual joke and his actual face "
+    "as the anchor. Draw from different photographic mechanisms: an uncomfortably close "
+    "wide-angle selfie and committed expression; an ordinary room made ridiculous by one "
+    "incongruous accessory or outfit; a needlessly solemn official-style portrait for a "
+    "trivial personal moment; or a candid reaction with its wildly disproportionate cause "
+    "visible behind him. Sometimes a tiny prop and perfect deadpan are funnier than a giant "
+    "spectacle. Keep natural skin texture, lived-in surroundings, slightly imperfect framing, "
+    "and the split-second energy of a friend taking the picture. The absurd element should "
+    "belong in the same photo, not look like a pasted-on meme template. These are visual "
+    "patterns, not scenes to copy: invent new locations, accessories, expressions and causes. "
+    "For an expression-led image, specify what his eyes, mouth and posture are doing; a "
+    "merely enlarged nose or generic smile is not the entire joke. "
+)
 DIALOGUE_MOVES = (
     "Give an immediate, very short reaction. Leave the explanation to the photo.",
     "Ask one incredulous or teasing question about the situation.",
@@ -129,6 +144,7 @@ LEGEND_SETTINGS = (
     "a bus stop", "a clothing-store fitting area", "a neighborhood park",
     "an apartment elevator", "a parking garage", "a laundromat", "a small event stage",
     "a beach promenade", "a movie theater lobby", "a gym", "a public library",
+    "a friend's living room", "an ordinary classroom", "a casual bar",
 )
 LEGEND_CATEGORIES = {
     "deadpan_absurd", "reaction_remix", "epic_trivial", "expression", "costume",
@@ -412,18 +428,15 @@ def legend_concepts(client: object, settings: Settings, slot: str, scenario: Sce
             "setup, one unmistakable visual contradiction or surprise, his specific expression "
             "or pose, the camera framing, and one small supporting detail. Aim for a photo "
             "friends would immediately share or remix, with the comic event and his face both "
-            "clear even as a small chat thumbnail. The mismatch should be BIG, surprising, "
-            "and instantly legible, escalating an ordinary starting point into a wild, "
-            "memorable situation. For this special photo, an everyday inconvenience is too "
-            "small: a flipped umbrella, a copier spilling paper, or a misplaced prop does "
-            "not qualify. Think meme-scale visual stakes or a hilariously committed human "
-            "performance rather than a normal mishap. "
-            "Do not propose a merely misplaced object, a tidy queue of cute things, a tiny "
-            "floating item, or a subtle detail that needs explanation. At least two concepts "
-            "should feature an unmistakable expression, audacious outfit, or visually "
-            "spectacular event in the same frame. Think of the energy of a dramatic reaction "
-            "to a disproportionate background, an absurdly solemn portrait for a ridiculous "
-            "occasion, or a face-distorting wide-angle selfie, without copying an example. "
+            "clear even as a small chat thumbnail. Make the laugh come from a precise "
+            "expression, camera distance, visual contrast, or impossibly well-timed background. "
+            "A ridiculous close-up or cheap accessory worn with total conviction can be as "
+            "memorable as a spectacular impossible event. Do not inflate every idea into a "
+            "disaster, gigantic object, or world-ending scene. A normal mishap or subtle "
+            "detail that needs a caption is still too weak. Generic lens distortion or a "
+            "tiny background alignment alone is also too weak. Make the three concepts use "
+            "different comic mechanisms and camera distances. "
+            + FRIEND_PHOTO_STYLE +
             "Use the three assigned settings in order, exactly one per concept. Avoid offices, "
             "copy rooms, printers, paper avalanches, and umbrellas. Be original rather than adding many "
             "unrelated absurd objects. Make the joke visible "
@@ -469,11 +482,14 @@ def create_idea(
         "This is today's ONE high-effort comedy photo. Compare the three candidate concepts "
         "for instant visual readability at thumbnail size, originality, a strong reaction or "
         "deadpan contrast, and whether Jeonghun remains the focus. Reject cute but weak "
-        "anomalies, ordinary inconveniences, mildly misplaced props, and ideas that need a "
-        "caption to be funny. A flipped umbrella or a spilling printer is too weak. "
+        "anomalies, generic mishaps, and ideas that need a caption to be funny. "
+        "Reject a concept whose only surprise is a wide-angle nose or a tiny background "
+        "detail; the expression, action, or contrast must carry the joke instantly. "
         "If all three are weak, invent one better idea within the selected category and one "
         "of their assigned settings. Do not pivot to an office or copier scene. "
-        "Pick the strongest, then refine it: describe "
+        "A face-filling selfie, a perfectly judged silly accessory, or a formal portrait can "
+        "beat a giant spectacle when the expression and contrast are sharper. Pick the strongest, "
+        "then refine it: describe "
         "the exact split-second, camera angle and distance, facial expression, placement of "
         "the main visual punchline, and one quiet secondary detail. Give the image model a "
         "specific, coherent single-photo prompt, not a vague genre label. The final dialogue "
@@ -525,12 +541,8 @@ def create_idea(
             "restaurants, meals, food props, beds, or pajamas because of the time label. "
             "Food can be the main joke when the food category is selected. Do not mention "
             "the posting time in the dialogue unless the chosen scene naturally calls for it. "
-            "Aim for the kind of photo close friends immediately laugh at and remix: his face "
-            "is recognizable at thumbnail size, his expression or deadpan attitude is strong, "
-            "and one obvious visual event explains why this photo is funny. A dramatic reaction "
-            "to a ridiculous background, an extreme wide-angle selfie, an incongruous accessory, "
-            "or a needlessly solemn official portrait are good patterns, but do not copy a past "
-            "image. Preserve the simple single-photo feel; avoid polished advertising, generic "
+            + FRIEND_PHOTO_STYLE +
+            "Preserve the simple single-photo feel; avoid polished advertising, generic "
             "stock-photo smiles, and busy collections of jokes. Make its visual joke clear "
             "without relying on words; vary the framing, camera distance, setting, expression, "
             "and clothes. Let him react as if showing "
@@ -594,6 +606,9 @@ def generate_meme(
         "that feels like something he would share with friends. His face and the visual punchline "
         "should both read clearly on a small phone screen. Do not force the neutral expression "
         "from the reference photos; change his expression when the scene calls for it. "
+        "Keep the camera perspective and lighting consistent across his face, clothing, props "
+        "and background. Favor a believable, slightly imperfect friend-taken snapshot over "
+        "a polished studio render; let a close selfie distort perspective naturally when asked. "
         "The original clothing, accessories, "
         "and background are optional and should change when the new scene calls for it. "
         "No words, dialogue, captions, speech bubbles, logos, or watermarks anywhere in the image."
