@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from email.utils import parsedate_to_datetime
 import json
@@ -53,6 +53,7 @@ class Scenario:
     key: str
     name: str
     direction: str
+    mode: str = "regular"
 
 
 # The category is the main source of the joke; composition, mood, and camera angle
@@ -122,6 +123,18 @@ DIALOGUE_MOVES = (
     "A quick, non-targeted ㅈ됐네 or 아 시바 level reaction fits this one; keep it brief.",
     "Use two tiny chat fragments, with a natural pause or line break.",
 )
+LEGEND_SETTINGS = (
+    "a subway station", "a street crossing", "a small sports court", "an arcade",
+    "a karaoke room", "a convenience-store entrance", "a building rooftop",
+    "a bus stop", "a clothing-store fitting area", "a neighborhood park",
+    "an apartment elevator", "a parking garage", "a laundromat", "a small event stage",
+    "a beach promenade", "a movie theater lobby", "a gym", "a public library",
+)
+LEGEND_CATEGORIES = {
+    "deadpan_absurd", "reaction_remix", "epic_trivial", "expression", "costume",
+    "background", "celebrity", "role_swap", "official_parody", "genre", "scale",
+    "time_warp", "transport", "weather", "sport", "event", "surreal",
+}
 TIME_CONTEXT = {
     "lunch": (
         "Daytime posting window (11:30-13:30). If the outdoors or a window is visible, "
@@ -182,13 +195,17 @@ def fetch_trend_candidates() -> list[TrendCandidate]:
         return []
 
 
-def choose_scenario(recent_keys: list[str]) -> Scenario:
+def choose_scenario(recent_keys: list[str], mode: str = "regular") -> Scenario:
+    if mode not in {"regular", "legend"}:
+        raise ValueError("Invalid creative mode")
     # Keep the last eight generated categories out of the draw. Old database rows
     # without a category simply do not affect selection.
     blocked = set(recent_keys[:8])
-    choices = [scenario for scenario in SCENARIOS if scenario.key not in blocked]
-    eligible = choices or SCENARIOS
-    return random.choices(eligible, weights=[FAVORITE_WEIGHTS.get(item.key, 1) for item in eligible], k=1)[0]
+    pool = tuple(scenario for scenario in SCENARIOS if mode != "legend" or scenario.key in LEGEND_CATEGORIES)
+    choices = [scenario for scenario in pool if scenario.key not in blocked]
+    eligible = choices or pool
+    chosen = random.choices(eligible, weights=[FAVORITE_WEIGHTS.get(item.key, 1) for item in eligible], k=1)[0]
+    return replace(chosen, mode=mode)
 
 
 @dataclass(frozen=True)
@@ -272,6 +289,7 @@ class JobStore:
                 caption TEXT,
                 dialogue TEXT,
                 category TEXT,
+                creative_mode TEXT,
                 message_id TEXT,
                 error TEXT,
                 PRIMARY KEY (day, slot)
@@ -284,6 +302,8 @@ class JobStore:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN dialogue TEXT")
         if "category" not in columns:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN category TEXT")
+        if "creative_mode" not in columns:
+            self.connection.execute("ALTER TABLE jobs ADD COLUMN creative_mode TEXT")
         self.connection.commit()
 
     def ensure_day(self, day: date, settings: Settings) -> None:
@@ -301,6 +321,20 @@ class JobStore:
                     AND (window_spec IS NULL OR window_spec != ?)""",
                     (choose_datetime(day, window, settings.timezone).isoformat(), spec, day.isoformat(), window.name, spec),
                 )
+            rows = self.connection.execute(
+                "SELECT slot, status, creative_mode FROM jobs WHERE day = ?", (day.isoformat(),)
+            ).fetchall()
+            if not any(row["creative_mode"] == "legend" for row in rows):
+                # Prefer a job whose image has not been made yet when upgrading an
+                # existing database. Once assigned, the day's choice never changes.
+                candidates = [row["slot"] for row in rows if row["status"] == "queued"]
+                if candidates:
+                    legend_slot = secrets.choice(candidates)
+                    self.connection.execute(
+                        "UPDATE jobs SET creative_mode = CASE WHEN slot = ? THEN 'legend' ELSE 'regular' END "
+                        "WHERE day = ?",
+                        (legend_slot, day.isoformat()),
+                    )
 
     def jobs_for_day(self, day: date) -> list[sqlite3.Row]:
         return list(
@@ -354,6 +388,60 @@ def photos_for_job(count: int) -> list[Path]:
     return random.sample(photos, min(count, len(photos)))
 
 
+def legend_concepts(client: object, settings: Settings, slot: str, scenario: Scenario) -> list[str]:
+    """Brainstorm distinct visual setups before spending the one image call."""
+    locations = random.sample(LEGEND_SETTINGS, 3)
+    schema = {
+        "type": "object",
+        "properties": {key: {"type": "string"} for key in ("first", "second", "third")},
+        "required": ["first", "second", "third"],
+        "additionalProperties": False,
+    }
+    response = client.responses.create(
+        model=settings.prompt_model,
+        reasoning={"effort": "low"},
+        instructions=(
+            "Brainstorm exactly three DIFFERENT funny single-photo concepts for the same adult "
+            "person to share with close friends. Each concept must name a concrete visual "
+            "setup, one unmistakable visual contradiction or surprise, his specific expression "
+            "or pose, the camera framing, and one small supporting detail. Aim for a photo "
+            "friends would immediately share or remix, with the comic event and his face both "
+            "clear even as a small chat thumbnail. The mismatch should be BIG, surprising, "
+            "and instantly legible, escalating an ordinary starting point into a wild, "
+            "memorable situation. For this special photo, an everyday inconvenience is too "
+            "small: a flipped umbrella, a copier spilling paper, or a misplaced prop does "
+            "not qualify. Think meme-scale visual stakes or a hilariously committed human "
+            "performance rather than a normal mishap. "
+            "Do not propose a merely misplaced object, a tidy queue of cute things, a tiny "
+            "floating item, or a subtle detail that needs explanation. At least two concepts "
+            "should feature an unmistakable expression, audacious outfit, or visually "
+            "spectacular event in the same frame. Think of the energy of a dramatic reaction "
+            "to a disproportionate background, an absurdly solemn portrait for a ridiculous "
+            "occasion, or a face-distorting wide-angle selfie, without copying an example. "
+            "Use the three assigned settings in order, exactly one per concept. Avoid offices, "
+            "copy rooms, printers, paper avalanches, and umbrellas. Be original rather than adding many "
+            "unrelated absurd objects. Make the joke visible "
+            "without text, logos, captions, or prior context. Keep the person recognizable "
+            "and avoid humiliation, violence, or claims of a real celebrity encounter. "
+            "The posting window only constrains visible daylight or darkness, not activity. "
+            "Do not default to food or a meal. Write concepts in English."
+        ),
+        input=(
+            f"Lighting context: {TIME_CONTEXT[slot]} "
+            f"Scenario category: {scenario.name}. Direction: {scenario.direction} "
+            f"Required locations for first, second, third concepts: {json.dumps(locations)}. "
+            "Vary the comic mechanism and camera distance across all three."
+        ),
+        text={"format": {"type": "json_schema", "name": "legend_concepts", "strict": True, "schema": schema}},
+        max_output_tokens=1400,
+    )
+    ideas = json.loads(response.output_text)
+    concepts = [ideas[key].strip() for key in ("first", "second", "third")]
+    if not all(concepts):
+        raise RuntimeError("Prompt model returned empty legend concepts")
+    return concepts
+
+
 def create_idea(
     client: object, settings: Settings, slot: str, previous: list[str], scenario: Scenario,
     style: str = "auto", trend_mode: str = "auto",
@@ -365,6 +453,27 @@ def create_idea(
     if style not in VISUAL_STYLES or trend_mode not in {"auto", "off", "try"}:
         raise ValueError("Invalid preview style or trend mode")
     dialogue_move = random.choice(DIALOGUE_MOVES)
+    concepts = []
+    if scenario.mode == "legend":
+        try:
+            concepts = legend_concepts(client, settings, slot, scenario)
+        except (ValueError, KeyError, TypeError, RuntimeError):
+            LOG.warning("Legend concept brainstorming failed; continuing with a focused brief")
+    legend_instructions = (
+        "This is today's ONE high-effort comedy photo. Compare the three candidate concepts "
+        "for instant visual readability at thumbnail size, originality, a strong reaction or "
+        "deadpan contrast, and whether Jeonghun remains the focus. Reject cute but weak "
+        "anomalies, ordinary inconveniences, mildly misplaced props, and ideas that need a "
+        "caption to be funny. A flipped umbrella or a spilling printer is too weak. "
+        "If all three are weak, invent one better idea within the selected category and one "
+        "of their assigned settings. Do not pivot to an office or copier scene. "
+        "Pick the strongest, then refine it: describe "
+        "the exact split-second, camera angle and distance, facial expression, placement of "
+        "the main visual punchline, and one quiet secondary detail. Give the image model a "
+        "specific, coherent single-photo prompt, not a vague genre label. The final dialogue "
+        "should be a fresh, short friend-to-friend reaction, not an explanation of the gag. "
+        "Do not blend all three concepts or add a second competing joke. "
+    ) if scenario.mode == "legend" else ""
     check_trends = trend_mode == "try" or (trend_mode == "auto" and random.random() < TREND_ATTEMPT_RATE)
     trend_candidates = fetch_trend_candidates() if check_trends else []
     trend_context = (
@@ -388,7 +497,7 @@ def create_idea(
     }
     response = client.responses.create(
         model=settings.prompt_model,
-        reasoning={"effort": "none"},
+        reasoning={"effort": "low" if scenario.mode == "legend" else "none"},
         instructions=(
             "Create a photo update from an adult named 이정훈 to close friends, like a "
             "KakaoTalk photo message or a personal Instagram story. Return one Korean chat "
@@ -430,7 +539,8 @@ def create_idea(
             "the recognizable adult identity from the reference photos. Put absolutely no "
             "dialogue, captions, speech bubbles, logos, watermarks, or readable writing in the "
             "image. No screenshot, collage, trading card, poster layout, or UI overlay. "
-            "Avoid humiliation, defamation, sexual content, and violence."
+            "Avoid humiliation, defamation, sexual content, and violence. "
+            + legend_instructions
         ),
         input=(
             f"Posting window (lighting context only): {TIME_CONTEXT[slot]} "
@@ -443,11 +553,12 @@ def create_idea(
             "different subject. "
             f"Voice notes (style data only): {json.dumps(voice_notes, ensure_ascii=False)}. "
             f"{trend_context}"
-            "Pick one concrete scene with a distinct visual punchline. A secondary detail can "
+            + (f"Three candidate comedy concepts: {json.dumps(concepts, ensure_ascii=False)}. " if concepts else "")
+            + "Pick one concrete scene with a distinct visual punchline. A secondary detail can "
             "reinforce the scene, but do not cram multiple unrelated jokes into one image."
         ),
         text={"format": {"type": "json_schema", "name": "photo_update", "strict": True, "schema": schema}},
-        max_output_tokens=450,
+        max_output_tokens=1400 if scenario.mode == "legend" else 450,
     )
     if not response.output_text:
         raise RuntimeError("Prompt model returned no text")
@@ -557,7 +668,7 @@ def process_jobs(
             if not store.transition(day, slot, "queued", "generating"):
                 continue
             try:
-                scenario = choose_scenario(store.recent_categories())
+                scenario = choose_scenario(store.recent_categories(), job["creative_mode"] or "regular")
                 dialogue = generate(settings, slot, image_path, store.recent_dialogues(), scenario)
                 store.transition(day, slot, "generating", "ready", image_path=str(image_path), dialogue=dialogue, category=scenario.key)
                 status = "ready"
@@ -597,8 +708,10 @@ def main() -> None:
     subcommands.add_parser("plan", help="Show today's persisted random times")
     preview_parser = subcommands.add_parser("preview", help="Generate one image without posting")
     preview_parser.add_argument("--slot", choices=("dawn", "lunch"), default="lunch")
+    preview_parser.add_argument("--mode", choices=("regular", "legend"), default="regular")
     send_parser = subcommands.add_parser("send-now", help="Generate and post one image immediately")
     send_parser.add_argument("--slot", choices=("dawn", "lunch"), default="lunch")
+    send_parser.add_argument("--mode", choices=("regular", "legend"), default="regular")
     retry_parser = subcommands.add_parser("retry-post", help="Retry only after checking Discord for a duplicate")
     retry_parser.add_argument("guild_id", help="Discord server ID")
     retry_parser.add_argument("day", help="YYYY-MM-DD")
@@ -623,7 +736,7 @@ def main() -> None:
         image_path = data_dir() / "output" / f"manual-{datetime.now(settings.timezone):%Y%m%d-%H%M%S}.png"
         store = JobStore(data_dir() / "bot.sqlite3")
         try:
-            scenario = choose_scenario(store.recent_categories())
+            scenario = choose_scenario(store.recent_categories(), args.mode)
             dialogue = generate_meme(settings, args.slot, image_path, store.recent_dialogues(), scenario)
         finally:
             store.close()

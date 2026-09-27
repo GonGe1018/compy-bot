@@ -53,7 +53,7 @@ class GuildConfigurationTests(unittest.TestCase):
         self.assertTrue(group.default_permissions.administrator)
         self.assertEqual(
             [parameter.name for parameter in group.get_command("미리보기").parameters],
-            ["유형", "분위기", "시간대", "이슈"],
+            ["유형", "분위기", "시간대", "이슈", "목표"],
         )
         panel = discord_app.SettingsView(self.registry, self.settings, owner_id=1, guild_id=101)
         self.assertTrue(any(isinstance(item, discord_app.ChannelPicker) for item in panel.children))

@@ -287,7 +287,8 @@ def status_embed(guild_id: int, registry: GuildRegistry, settings: core.Settings
         for row in jobs:
             planned = datetime.fromisoformat(row["scheduled_at"])
             label = "밤" if row["slot"] == "dawn" else "낮"
-            lines.append(f"{label} · {planned:%m/%d %H:%M} ({settings.timezone}) · <t:{int(planned.timestamp())}:R>")
+            mode = " · 레전드 도전" if row["creative_mode"] == "legend" else ""
+            lines.append(f"{label}{mode} · {planned:%m/%d %H:%M} ({settings.timezone}) · <t:{int(planned.timestamp())}:R>")
         embed.add_field(name="다음 예약", value="\n".join(lines) if lines else "아직 없음", inline=False)
         status_labels = {"sent": "발송 완료", "failed": "생성 실패", "posting": "게시 여부 확인 필요"}
         history = recent_jobs(guild_id)
@@ -512,7 +513,7 @@ class JunghoonCommands(app_commands.Group):
 
     @app_commands.command(name="미리보기", description="짤을 한 장 생성합니다 · OpenAI API 비용 발생")
     @app_commands.describe(유형="비워두면 무작위 유형으로 생성합니다")
-    @app_commands.describe(분위기="사진의 과장 정도", 시간대="사진의 낮·밤 조명만 선택", 이슈="최근 밈 패러디 후보를 확인할지")
+    @app_commands.describe(분위기="사진의 과장 정도", 시간대="사진의 낮·밤 조명만 선택", 이슈="최근 밈 패러디 후보를 확인할지", 목표="일반 짤 또는 레전드 짤 기획")
     @app_commands.autocomplete(유형=scenario_autocomplete)
     @app_commands.choices(
         분위기=[
@@ -530,12 +531,17 @@ class JunghoonCommands(app_commands.Group):
             app_commands.Choice(name="이슈 없이", value="off"),
             app_commands.Choice(name="최근 밈 후보 확인", value="try"),
         ],
+        목표=[
+            app_commands.Choice(name="일반 짤", value="regular"),
+            app_commands.Choice(name="레전드 짤 도전", value="legend"),
+        ],
     )
     async def preview(
         self, interaction: discord.Interaction, 유형: str | None = None,
         분위기: app_commands.Choice[str] | None = None,
         시간대: app_commands.Choice[str] | None = None,
         이슈: app_commands.Choice[str] | None = None,
+        목표: app_commands.Choice[str] | None = None,
     ) -> None:
         if await reject_if_not_admin(interaction):
             return
@@ -561,7 +567,8 @@ class JunghoonCommands(app_commands.Group):
             try:
                 store = job_store(guild_id)
                 try:
-                    scenario = selected or core.choose_scenario(store.recent_categories())
+                    mode = 목표.value if 목표 else "regular"
+                    scenario = replace(selected, mode=mode) if selected else core.choose_scenario(store.recent_categories(), mode)
                     previous = [
                         *self.previews.recent_dialogues(guild_id),
                         *store.recent_dialogues(),
@@ -574,7 +581,7 @@ class JunghoonCommands(app_commands.Group):
                 )
                 self.previews.add(preview_id, guild_id, interaction.user.id, path, dialogue, slot)
                 await interaction.followup.send(
-                    content=f"**유형:** {scenario.name}\n**정훈봇 대사:** {dialogue}",
+                    content=f"**유형:** {scenario.name}\n**목표:** {'레전드 짤 도전' if scenario.mode == 'legend' else '일반 짤'}\n**정훈봇 대사:** {dialogue}",
                     file=discord.File(path),
                     view=PreviewView(
                         self.registry, self.previews, self.settings, preview_id,
@@ -657,6 +664,6 @@ def print_plan(settings: core.Settings) -> None:
         state = "enabled" if saved["enabled"] else "paused"
         print(f"Server {guild_id} -> channel {saved['channel_id']} [{state}]")
         for job in upcoming_jobs(guild_id, settings):
-            print(f"  {job['slot']}: {job['scheduled_at']} [{job['status']}]")
+            print(f"  {job['slot']}: {job['scheduled_at']} [{job['status']}, {job['creative_mode'] or 'regular'}]")
         for job in recent_jobs(guild_id):
             print(f"  recent {job['day']} {job['slot']}: [{job['status']}]")

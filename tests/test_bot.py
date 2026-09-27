@@ -44,6 +44,8 @@ class ScheduleTests(unittest.TestCase):
         self.store.ensure_day(day, self.settings)
         second = self.store.jobs_for_day(day)
         self.assertEqual([row["scheduled_at"] for row in first], [row["scheduled_at"] for row in second])
+        self.assertEqual([row["creative_mode"] for row in first], [row["creative_mode"] for row in second])
+        self.assertCountEqual([row["creative_mode"] for row in first], ["legend", "regular"])
         self.assertEqual(len(first), 2)
         for row in first:
             window = next(window for window in self.settings.windows if window.name == row["slot"])
@@ -72,6 +74,21 @@ class ScheduleTests(unittest.TestCase):
         self.assertTrue(datetime(2026, 9, 28, 22, tzinfo=self.settings.timezone) <= selected)
         self.assertTrue(selected < datetime(2026, 9, 29, 4, tzinfo=self.settings.timezone))
 
+    def test_existing_database_assigns_legend_to_remaining_queued_slot(self):
+        day = date(2026, 9, 28)
+        self.store.ensure_day(day, self.settings)
+        with self.store.connection:
+            self.store.connection.execute(
+                "UPDATE jobs SET creative_mode = NULL WHERE day = ?", (day.isoformat(),)
+            )
+            self.store.connection.execute(
+                "UPDATE jobs SET status = 'sent' WHERE day = ? AND slot = 'lunch'", (day.isoformat(),)
+            )
+        self.store.ensure_day(day, self.settings)
+        rows = {row["slot"]: row for row in self.store.jobs_for_day(day)}
+        self.assertEqual(rows["dawn"]["creative_mode"], "legend")
+        self.assertEqual(rows["lunch"]["creative_mode"], "regular")
+
     def test_prepare_then_post_exactly_once(self):
         day = date(2026, 9, 28)
         self.store.ensure_day(day, self.settings)
@@ -84,9 +101,11 @@ class ScheduleTests(unittest.TestCase):
         dawn = next(row for row in self.store.jobs_for_day(day) if row["slot"] == "dawn")
         scheduled = datetime.fromisoformat(dawn["scheduled_at"])
         calls = {"generate": 0, "post": 0}
+        generated_modes = []
 
-        def generate(_settings, _slot, path, _previous, _scenario):
+        def generate(_settings, _slot, path, _previous, scenario):
             calls["generate"] += 1
+            generated_modes.append(scenario.mode)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fake image")
             return "이거 내가 해냈다고?"
@@ -107,6 +126,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(updated["message_id"], "discord-message-1")
         self.assertEqual(updated["dialogue"], "이거 내가 해냈다고?")
         self.assertIn(updated["category"], {scenario.key for scenario in bot.SCENARIOS})
+        self.assertEqual(generated_modes, [updated["creative_mode"]])
 
     def test_uncertain_post_is_not_retried_automatically(self):
         day = date(2026, 9, 28)
@@ -192,6 +212,9 @@ class ScheduleTests(unittest.TestCase):
         recent = [scenario.key for scenario in bot.SCENARIOS[:8]]
         for _ in range(50):
             self.assertNotIn(bot.choose_scenario(recent).key, recent)
+            legend = bot.choose_scenario(recent, "legend")
+            self.assertIn(legend.key, bot.LEGEND_CATEGORIES)
+            self.assertNotIn(legend.key, recent)
 
     def test_idea_uses_selected_category_and_keeps_words_out_of_photo(self):
         client = Mock()
@@ -208,6 +231,27 @@ class ScheduleTests(unittest.TestCase):
         self.assertIn(scenario.name, request["input"])
         self.assertIn("no dialogue, captions", request["instructions"])
         self.assertIn("surreal", request["instructions"])
+
+    def test_legend_idea_brainstorms_three_concepts_then_refines_one(self):
+        client = Mock()
+        client.responses.create.side_effect = [
+            SimpleNamespace(output_text=json.dumps({
+                "first": "A wide-angle selfie with a tiny parade behind him.",
+                "second": "He is deadpan as an animal takes over a formal ceremony.",
+                "third": "A huge prop dwarfs him at a bus stop.",
+            })),
+            SimpleNamespace(output_text=json.dumps({
+                "dialogue": "아 시바 이게 뭐냐", "image_prompt": "One candid, funny photo."
+            })),
+        ]
+        scenario = replace(bot.SCENARIOS[0], mode="legend")
+        with patch.object(bot.random, "random", return_value=1):
+            dialogue, prompt = bot.create_idea(client, self.settings, "lunch", [], scenario)
+        self.assertEqual((dialogue, prompt), ("아 시바 이게 뭐냐", "One candid, funny photo."))
+        self.assertEqual(client.responses.create.call_count, 2)
+        final_request = client.responses.create.call_args.kwargs
+        self.assertIn("Three candidate comedy concepts", final_request["input"])
+        self.assertIn("camera angle and distance", final_request["instructions"])
 
     def test_trend_candidates_require_fresh_lighthearted_meme_signal(self):
         feed = """<rss><channel>
