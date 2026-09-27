@@ -139,6 +139,15 @@ class PreviewStore:
                 "SELECT * FROM previews WHERE created_at >= ?", (cutoff,)
             ))
 
+    def recent_dialogues(self, guild_id: int, limit: int = 8) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT dialogue FROM previews WHERE guild_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (str(guild_id), limit),
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def claim(self, preview_id: str) -> bool:
         with self._connect() as connection:
             result = connection.execute(
@@ -192,8 +201,20 @@ def recent_jobs(guild_id: int) -> list[sqlite3.Row]:
         store.close()
 
 
-def process_guild(registry: GuildRegistry, settings: core.Settings, guild_id: int) -> None:
+def process_guild(
+    registry: GuildRegistry, settings: core.Settings, guild_id: int,
+    previews: PreviewStore | None = None,
+) -> None:
     store = job_store(guild_id)
+
+    def generate(
+        _settings: core.Settings, slot: str, image_path: Path,
+        previous: list[str], scenario: core.Scenario,
+    ) -> str:
+        recent_previews = (previews or PreviewStore()).recent_dialogues(guild_id)
+        return core.generate_meme(
+            _settings, slot, image_path, [*recent_previews, *previous][:12], scenario,
+        )
 
     def post(_settings: core.Settings, image_path: Path, slot: str, dialogue: str) -> str:
         current = registry.get(guild_id)
@@ -209,7 +230,7 @@ def process_guild(registry: GuildRegistry, settings: core.Settings, guild_id: in
 
     try:
         store.recover_generation()
-        core.process_jobs(store, settings, datetime.now(settings.timezone), post=post)
+        core.process_jobs(store, settings, datetime.now(settings.timezone), generate=generate, post=post)
     finally:
         store.close()
 
@@ -541,7 +562,10 @@ class JunghoonCommands(app_commands.Group):
                 store = job_store(guild_id)
                 try:
                     scenario = selected or core.choose_scenario(store.recent_categories())
-                    previous = store.recent_dialogues()
+                    previous = [
+                        *self.previews.recent_dialogues(guild_id),
+                        *store.recent_dialogues(),
+                    ][:12]
                 finally:
                     store.close()
                 dialogue = await asyncio.to_thread(
@@ -607,7 +631,7 @@ class JunghoonClient(discord.Client):
     async def scheduler(self) -> None:
         for guild_id in self.registry.active_guilds():
             try:
-                await asyncio.to_thread(process_guild, self.registry, self.settings, guild_id)
+                await asyncio.to_thread(process_guild, self.registry, self.settings, guild_id, self.previews)
             except Exception:
                 LOG.exception("Scheduler error for guild %s", guild_id)
 

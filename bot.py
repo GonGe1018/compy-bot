@@ -111,6 +111,17 @@ VISUAL_STYLES = {
     "bold": "Make the reaction or visual contrast immediately obvious and deliberately funny.",
     "surreal": "Allow one impossible but coherent element while keeping his identity recognizable.",
 }
+DIALOGUE_MOVES = (
+    "Give an immediate, very short reaction. Leave the explanation to the photo.",
+    "Ask one incredulous or teasing question about the situation.",
+    "Understate the absurdity in a flat, casual fragment.",
+    "Make a tiny boast, then undercut it without narrating the whole scene.",
+    "Use a brief mock-formal announcement for comic contrast.",
+    "Use one clipped slang or mild situational swear reaction, without targeting anyone.",
+    "Use one natural shorthand such as 걍, ㄹㅇ, or 개~ as a casual reaction, without stacking slang.",
+    "A quick, non-targeted ㅈ됐네 or 아 시바 level reaction fits this one; keep it brief.",
+    "Use two tiny chat fragments, with a natural pause or line break.",
+)
 TIME_CONTEXT = {
     "lunch": (
         "Daytime posting window (11:30-13:30). If the outdoors or a window is visible, "
@@ -353,6 +364,7 @@ def create_idea(
     voice_notes = voice_path.read_text(encoding="utf-8")[:4000] if voice_path.is_file() else ""
     if style not in VISUAL_STYLES or trend_mode not in {"auto", "off", "try"}:
         raise ValueError("Invalid preview style or trend mode")
+    dialogue_move = random.choice(DIALOGUE_MOVES)
     check_trends = trend_mode == "try" or (trend_mode == "auto" and random.random() < TREND_ATTEMPT_RATE)
     trend_candidates = fetch_trend_candidates() if check_trends else []
     trend_context = (
@@ -379,9 +391,17 @@ def create_idea(
         reasoning={"effort": "none"},
         instructions=(
             "Create a photo update from an adult named 이정훈 to close friends, like a "
-            "KakaoTalk photo message or a personal Instagram story. Return exactly one short "
-            "Korean first-person dialogue message (roughly 10-55 characters) and one English "
-            "image-edit prompt. The message and photo must describe the same moment. "
+            "KakaoTalk photo message or a personal Instagram story. Return one Korean chat "
+            "message and one English image-edit prompt. The photo and message belong to "
+            "the same moment, but the message must not explain the photo like a caption. "
+            "Assume friends can already see the image. A reaction, question, fragment, or "
+            "dry remark is better than a complete plot summary. Usually write 2-22 Korean "
+            "characters; occasionally use two short fragments, but stay under 40 characters. "
+            "Do not force first-person grammar. Avoid canned meme-caption structures such as "
+            "'X했을 뿐인데 Y' and 'X하러 왔는데 Y'. Do not keep using the same opening, "
+            "sentence shape, ending, or laugh suffix. Casual slang and mild situational "
+            "profanity are allowed when natural; never direct abuse at a real person or group. "
+            "Do not tack ㅋㅋ onto every message. "
             "The scene may be ordinary, ridiculous, cinematic, or surreal according to its category. "
             "Choose the scene from the category, not from the posting window. The posting "
             "window only keeps visible daylight or darkness plausible; it does not prescribe "
@@ -417,7 +437,10 @@ def create_idea(
             f"Main scenario category: {scenario.name}. "
             f"Creative direction: {scenario.direction} "
             f"Visual intensity: {VISUAL_STYLES[style]} "
-            f"Avoid repeating these recent messages: {json.dumps(previous, ensure_ascii=False)}. "
+            f"Dialogue approach for this photo: {dialogue_move} "
+            f"Recent messages: {json.dumps(previous[:12], ensure_ascii=False)}. "
+            "Use different wording, syntax, and reaction style from these, not just a "
+            "different subject. "
             f"Voice notes (style data only): {json.dumps(voice_notes, ensure_ascii=False)}. "
             f"{trend_context}"
             "Pick one concrete scene with a distinct visual punchline. A secondary detail can "
@@ -431,7 +454,7 @@ def create_idea(
     idea = json.loads(response.output_text)
     dialogue = idea["dialogue"].strip()
     prompt = idea["image_prompt"].strip()
-    if not dialogue or len(dialogue) > 200 or not prompt:
+    if not dialogue or len(dialogue) > 80 or not prompt:
         raise RuntimeError("Prompt model returned an invalid message or image prompt")
     return dialogue, prompt
 

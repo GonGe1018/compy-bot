@@ -105,6 +105,8 @@ class GuildConfigurationTests(unittest.TestCase):
         ))
 
     def test_preview_command_uses_selected_category_without_network(self):
+        self.previews.add("earlier", 101, 77, self.root / "earlier.png", "아 뭐야", "lunch")
+        self.previews.add("other-guild", 202, 88, self.root / "other.png", "다른 서버 대사", "lunch")
         client = discord_app.JunghoonClient(self.settings, self.registry, self.previews)
         group = client.tree.get_commands()[0]
         interaction = SimpleNamespace(
@@ -116,6 +118,8 @@ class GuildConfigurationTests(unittest.TestCase):
 
         def generate(_settings, _slot, path, _previous, scenario, style, trend_mode):
             self.assertEqual((scenario.key, style, trend_mode), ("expression", "bold", "off"))
+            self.assertIn("아 뭐야", _previous)
+            self.assertNotIn("다른 서버 대사", _previous)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fake image")
             return "이거 봐 ㅋㅋ"
