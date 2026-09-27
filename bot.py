@@ -59,8 +59,8 @@ class Scenario:
 # The category is the main source of the joke; composition, mood, and camera angle
 # can still vary within each category.
 SCENARIOS = (
-    Scenario("daily", "소소한 일상", "A believable errand, walk, hobby, commute, desk update, or small win worth showing friends."),
-    Scenario("minor_mishap", "작은 사고", "A harmless everyday mistake or near miss caught at the funniest moment."),
+    Scenario("daily", "소소한 일상", "A believable errand, walk, hobby, commute, desk update, or small win with one odd, visually specific detail worth showing friends."),
+    Scenario("minor_mishap", "작은 사고", "A harmless everyday mistake caught at a genuinely funny split-second; the image must work without explaining what went wrong."),
     Scenario("deadpan_absurd", "평범한 표정, 황당한 상황", "Jeonghun keeps a completely straight face while one clearly absurd event unfolds around him."),
     Scenario("reaction_remix", "표정 재해석", "A large, unmistakable facial reaction becomes funny because of one newly imagined event in the same frame; make the cause of the reaction visible."),
     Scenario("epic_trivial", "사소한 일의 대서사", "A tiny achievement is photographed with hilariously grand, triumphant visual scale."),
@@ -87,16 +87,36 @@ SCENARIOS = (
     Scenario("surreal", "초현실", "One impossible but visually coherent element turns an otherwise candid photo into a surreal meme."),
 )
 
-# These mechanisms match the supplied examples especially well. Other categories
-# remain in rotation, and the recent-category exclusion still applies first.
-FAVORITE_WEIGHTS = {
-    "reaction_remix": 4,
-    "expression": 3,
-    "deadpan_absurd": 3,
-    "official_parody": 3,
-    "background": 2,
-    "costume": 2,
-    "coincidence": 2,
+# One of two daily posts is a legend; that draw uses only LEGEND_CATEGORIES.
+# Weights apply after excluding the eight most recent categories, so these are
+# relative odds for the currently eligible categories, not fixed percentages.
+SCENARIO_WEIGHTS = {
+    "daily": 1,
+    "minor_mishap": 1,
+    "deadpan_absurd": 5,
+    "reaction_remix": 7,
+    "epic_trivial": 3,
+    "expression": 6,
+    "costume": 5,
+    "background": 5,
+    "prop": 2,
+    "companion": 2,
+    "celebrity": 2,
+    "animal": 2,
+    "role_swap": 3,
+    "official_parody": 5,
+    "genre": 3,
+    "scale": 3,
+    "time_warp": 2,
+    "transport": 1,
+    "food": 1,
+    "weather": 2,
+    "coincidence": 4,
+    "technology": 2,
+    "social": 2,
+    "sport": 2,
+    "event": 3,
+    "surreal": 3,
 }
 TREND_RSS_URL = "https://trends.google.com/trending/rss?geo=KR"
 TREND_ATTEMPT_RATE = 0.18  # Screening often rejects candidates, so actual use is rarer.
@@ -149,7 +169,7 @@ LEGEND_SETTINGS = (
 LEGEND_CATEGORIES = {
     "deadpan_absurd", "reaction_remix", "epic_trivial", "expression", "costume",
     "background", "celebrity", "role_swap", "official_parody", "genre", "scale",
-    "time_warp", "transport", "weather", "sport", "event", "surreal",
+    "time_warp", "weather", "coincidence", "sport", "event", "surreal",
 }
 TIME_CONTEXT = {
     "lunch": (
@@ -220,7 +240,7 @@ def choose_scenario(recent_keys: list[str], mode: str = "regular") -> Scenario:
     pool = tuple(scenario for scenario in SCENARIOS if mode != "legend" or scenario.key in LEGEND_CATEGORIES)
     choices = [scenario for scenario in pool if scenario.key not in blocked]
     eligible = choices or pool
-    chosen = random.choices(eligible, weights=[FAVORITE_WEIGHTS.get(item.key, 1) for item in eligible], k=1)[0]
+    chosen = random.choices(eligible, weights=[SCENARIO_WEIGHTS[item.key] for item in eligible], k=1)[0]
     return replace(chosen, mode=mode)
 
 
