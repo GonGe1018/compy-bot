@@ -34,7 +34,13 @@ def main() -> None:
     AGENT_PATH.parent.mkdir(parents=True, exist_ok=True)
     agent = {
         "Label": LABEL,
-        "ProgramArguments": [str(ROOT / ".venv/bin/python"), "bot.py", "run"],
+        "ProgramArguments": [
+            "/usr/bin/caffeinate",
+            "-s",
+            str(ROOT / ".venv/bin/python"),
+            "bot.py",
+            "run",
+        ],
         "WorkingDirectory": str(ROOT),
         "EnvironmentVariables": {"BOT_DATA_DIR": str(data_dir)},
         "RunAtLoad": True,

@@ -52,4 +52,4 @@ launchctl print gui/$(id -u)/com.gonge1018.compy-bot
 tail -n 30 data/bot.stderr.log
 ```
 
-로그에 `Logged in as 정훈봇`이 보이면 연결된 상태입니다. 로그인된 사용자 세션에서 자동 시작하며, 오류로 종료되면 `launchd`가 다시 실행합니다. Docker Compose로 전환할 때는 먼저 `launchctl bootout gui/$(id -u)/com.gonge1018.compy-bot`으로 이 서비스를 중지하세요.
+로그에 `Logged in as 정훈봇`이 보이면 연결된 상태입니다. 로그인된 사용자 세션에서 자동 시작하며, 오류로 종료되면 `launchd`가 다시 실행합니다. 전원 어댑터 사용 중에는 `caffeinate -s`로 유휴 잠자기를 막습니다. 덮개를 닫을 때의 잠자기는 별도로 확인해야 합니다. Docker Compose로 전환할 때는 먼저 `launchctl bootout gui/$(id -u)/com.gonge1018.compy-bot`으로 이 서비스를 중지하세요.
