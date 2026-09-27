@@ -1,9 +1,9 @@
-name: junghoon-bot
+name: compy-bot
 
 services:
   bot:
     build: .
-    image: junghoon-bot:local
+    image: compy-bot:local
     init: true
     restart: unless-stopped
     stop_grace_period: 30s
