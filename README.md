@@ -42,6 +42,8 @@ uv run --frozen bot.py run
 
 `Dockerfile`과 `compose.yaml`이 준비돼 있습니다. 24시간 가동 맥북의 설정과 기존 DB 이전 절차는 [DEPLOY_MAC.md](DEPLOY_MAC.md)에 있습니다. 컨테이너는 `photos/`를 읽기 전용으로 사용하고 설정 DB·생성 이미지는 `data/`에 저장합니다.
 
+Docker Desktop에서 새 컨테이너가 시작되지 않는 경우에는 [launchd 대체 실행 방법](DEPLOY_MAC.md#로컬-uv-실행)을 사용합니다.
+
 ```bash
 mkdir -p photos data
 docker compose up -d --build

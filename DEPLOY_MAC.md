@@ -43,3 +43,13 @@ macOS 잠자기 설정: <https://support.apple.com/guide/mac-help/set-sleep-and-
 ## 로컬 uv 실행
 
 Docker 없이 맥북 터미널에서 점검할 때는 `uv sync --frozen` 후 `uv run --frozen bot.py plan` 또는 `uv run --frozen bot.py run`을 사용합니다. Docker와 로컬 실행을 동시에 켜지 마세요. 프로젝트 기본값은 현재 폴더에 데이터를 저장하고, `BOT_DATA_DIR`을 지정하면 해당 폴더에 저장합니다.
+
+Docker Desktop이 새 컨테이너를 실행하지 못할 때는 `launchd`로 같은 uv 환경을 상시 실행할 수 있습니다. 이 경우 `persona.txt`, 서버 설정 DB, 예약 DB는 위 표처럼 `data/`에 둡니다. Docker 컨테이너를 먼저 중지한 다음 맥북의 프로젝트 폴더에서 실행합니다.
+
+```bash
+python3 scripts/install_launchd.py
+launchctl print gui/$(id -u)/com.gonge1018.compy-bot
+tail -n 30 data/bot.stderr.log
+```
+
+로그에 `Logged in as 정훈봇`이 보이면 연결된 상태입니다. 로그인된 사용자 세션에서 자동 시작하며, 오류로 종료되면 `launchd`가 다시 실행합니다. Docker Compose로 전환할 때는 먼저 `launchctl bootout gui/$(id -u)/com.gonge1018.compy-bot`으로 이 서비스를 중지하세요.
