@@ -6,6 +6,7 @@ import os
 import plistlib
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -45,7 +46,17 @@ def main() -> None:
     subprocess.run(["launchctl", "bootout", f"{DOMAIN}/{LABEL}"], check=False, capture_output=True)
     with AGENT_PATH.open("wb") as stream:
         plistlib.dump(agent, stream)
-    subprocess.run(["launchctl", "bootstrap", DOMAIN, str(AGENT_PATH)], check=True)
+    for attempt in range(5):
+        result = subprocess.run(
+            ["launchctl", "bootstrap", DOMAIN, str(AGENT_PATH)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            break
+        if attempt == 4:
+            raise SystemExit(f"launchd 등록 실패: {result.stderr.strip()}")
+        time.sleep(1)
     print(f"정훈봇 launchd 등록 완료: {AGENT_PATH}")
     print(f"상태: launchctl print {DOMAIN}/{LABEL}")
     print(f"로그: {data_dir / 'bot.stderr.log'}")
