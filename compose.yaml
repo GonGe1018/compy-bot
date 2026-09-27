@@ -1,0 +1,21 @@
+name: junghoon-bot
+
+services:
+  bot:
+    build: .
+    image: junghoon-bot:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - .env
+    environment:
+      BOT_DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+      - ./photos:/app/photos:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
