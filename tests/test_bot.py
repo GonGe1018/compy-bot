@@ -249,7 +249,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), image_bytes)
         self.assertEqual(received, [
             ("reference-1.png", "PNG", "RGB", (1638, 2048)),
-            ("reference-2.png", "PNG", "RGB", (480, 600)),
+            ("reference-2.png", "PNG", "RGB", (408, 408)),
         ])
         self.assertEqual((first.stat().st_size, second.stat().st_size), original_sizes)
         self.assertIn("Image 1 is the main identity", client.images.edit.call_args.kwargs["prompt"])

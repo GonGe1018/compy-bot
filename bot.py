@@ -484,15 +484,19 @@ def photos_for_job(count: int, selected_names: tuple[str, ...] = ()) -> list[Pat
 
 
 def prepared_reference(path: Path, index: int) -> BytesIO:
-    """Enlarge the central face in the API copy without changing the selected photo."""
+    """Keep the first portrait and a tighter face-only second reference."""
     with Image.open(path) as source:
         image = ImageOps.exif_transpose(source)
         if image.mode != "RGB":
             image = image.convert("RGB")
-        # Both selected portraits center the person. Cropping wide backgrounds keeps
-        # more facial detail when the image API scales the reference internally.
         width, height = image.size
-        if width * 5 > height * 4:
+        if index == 2:
+            # The older cross-check should contribute facial traits, not its outfit
+            # or background. Both configured photos have the face near the top center.
+            side = round(min(width, height) * 0.68)
+            left = (width - side) // 2
+            image = image.crop((left, 0, left + side, side))
+        elif width * 5 > height * 4:
             crop_width = round(height * 4 / 5)
             left = (width - crop_width) // 2
             image = image.crop((left, 0, left + crop_width, height))
@@ -500,7 +504,8 @@ def prepared_reference(path: Path, index: int) -> BytesIO:
             crop_height = round(width * 5 / 4)
             top = (height - crop_height) // 2
             image = image.crop((0, top, width, top + crop_height))
-        image.thumbnail((MAX_REFERENCE_EDGE, MAX_REFERENCE_EDGE), Image.Resampling.LANCZOS)
+        max_edge = 1536 if index == 2 else MAX_REFERENCE_EDGE
+        image.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
         prepared = BytesIO()
         image.save(prepared, format="PNG", optimize=True)
     prepared.name = f"reference-{index}.png"
@@ -635,10 +640,10 @@ def generate_meme(
     dialogue, prompt = create_idea(client, settings, slot, previous, scenario, style, trend_mode)
     prompt += (
         " Edit using both reference photos of the same adult. Image 1 is the main identity "
-        "reference; Image 2 helps confirm his present-day appearance. Preserve his recognizable "
-        "facial features and keep the face clearly visible, even if the outfit, expression, "
-        "or setting changes. Create one coherent image. No dialogue, captions, or other text "
-        "inside the image."
+        "reference for his current adult appearance. Image 2 is an older face-only reference "
+        "for stable facial traits, not for age or clothing. Preserve his recognizable features "
+        "and keep his face clearly visible. Show this person only once. No dialogue, captions, "
+        "or other text inside the image."
     )
     with ExitStack() as stack:
         files = [
