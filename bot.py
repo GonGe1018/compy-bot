@@ -8,6 +8,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from email.utils import parsedate_to_datetime
+from io import BytesIO
 import json
 import logging
 import os
@@ -22,11 +23,13 @@ from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 
 from dotenv import load_dotenv
+from PIL import Image, ImageOps
 import requests
 
 
 ROOT = Path(__file__).resolve().parent
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_REFERENCE_EDGE = 2048
 PREPARE_AHEAD = timedelta(minutes=15)
 MAX_LATE = timedelta(minutes=30)
 LOG = logging.getLogger("compy_bot")
@@ -523,6 +526,20 @@ def photos_for_job(count: int, selected_names: tuple[str, ...] = ()) -> list[Pat
     return selected
 
 
+def prepared_reference(path: Path, index: int) -> BytesIO:
+    """Normalize the selected photo for the image API without changing its source file."""
+    with Image.open(path) as source:
+        image = ImageOps.exif_transpose(source)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.thumbnail((MAX_REFERENCE_EDGE, MAX_REFERENCE_EDGE), Image.Resampling.LANCZOS)
+        prepared = BytesIO()
+        image.save(prepared, format="PNG", optimize=True)
+    prepared.name = f"reference-{index}.png"
+    prepared.seek(0)
+    return prepared
+
+
 def legend_concepts(client: object, settings: Settings, slot: str, scenario: Scenario) -> list[str]:
     """Brainstorm distinct visual setups before spending the one image call."""
     locations = random.sample(LEGEND_SETTINGS, 3)
@@ -754,7 +771,10 @@ def generate_meme(
         "No words, dialogue, captions, speech bubbles, logos, or watermarks anywhere in the image."
     )
     with ExitStack() as stack:
-        files = [stack.enter_context(open(path, "rb")) for path in references]
+        files = [
+            stack.enter_context(prepared_reference(path, index))
+            for index, path in enumerate(references, start=1)
+        ]
         result = client.images.edit(
             model=settings.image_model,
             image=files if len(files) > 1 else files[0],

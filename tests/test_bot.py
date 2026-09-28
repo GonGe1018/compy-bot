@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
+from PIL import Image
+
 import bot
 
 
@@ -219,14 +221,23 @@ class ScheduleTests(unittest.TestCase):
 
     def test_generated_photo_is_saved_without_text_overlay(self):
         first = self.root / "first.jpg"
-        second = self.root / "second.jpg"
-        first.write_bytes(b"reference one")
-        second.write_bytes(b"reference two")
+        second = self.root / "second.png"
+        Image.new("RGB", (4096, 2304), "blue").save(first, format="JPEG")
+        Image.new("RGBA", (800, 600), "red").save(second, format="PNG")
+        original_sizes = (first.stat().st_size, second.stat().st_size)
         image_bytes = b"image bytes from the model"
         client = Mock()
-        client.images.edit.return_value = SimpleNamespace(
-            data=[SimpleNamespace(b64_json=base64.b64encode(image_bytes).decode("ascii"))]
-        )
+        received = []
+
+        def inspect_upload(**kwargs):
+            for upload in kwargs["image"]:
+                with Image.open(upload) as image:
+                    received.append((upload.name, image.format, image.mode, image.size))
+            return SimpleNamespace(
+                data=[SimpleNamespace(b64_json=base64.b64encode(image_bytes).decode("ascii"))]
+            )
+
+        client.images.edit.side_effect = inspect_upload
         destination = self.root / "output" / "update.png"
         with patch("openai.OpenAI", return_value=client), patch.object(
             bot, "photos_for_job", return_value=[first, second]
@@ -236,8 +247,11 @@ class ScheduleTests(unittest.TestCase):
             )
         self.assertEqual(dialogue, "와 이게 되네 ㅋㅋ")
         self.assertEqual(destination.read_bytes(), image_bytes)
-        self.assertEqual(client.images.edit.call_args.kwargs["image"][0].name, str(first))
-        self.assertEqual(client.images.edit.call_args.kwargs["image"][1].name, str(second))
+        self.assertEqual(received, [
+            ("reference-1.png", "PNG", "RGB", (2048, 1152)),
+            ("reference-2.png", "PNG", "RGB", (800, 600)),
+        ])
+        self.assertEqual((first.stat().st_size, second.stat().st_size), original_sizes)
         self.assertIn("Image 1 is the primary identity anchor", client.images.edit.call_args.kwargs["prompt"])
 
     def test_scenario_does_not_repeat_recent_categories(self):

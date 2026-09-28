@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "discord.py>=2.6,<3",
     "openai>=3.19.2,<4",
+    "pillow>=11,<13",
     "python-dotenv>=1,<2",
     "requests>=2.32,<3",
     "tzdata>=2025.2",
