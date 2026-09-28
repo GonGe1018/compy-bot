@@ -216,7 +216,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(client.images.edit.call_args.kwargs["image"][1].name, str(second))
 
     def test_scenario_does_not_repeat_recent_categories(self):
-        recent = [scenario.key for scenario in bot.SCENARIOS[:8]]
+        recent = [scenario.key for scenario in bot.SCENARIOS[:4]]
         for _ in range(50):
             self.assertNotIn(bot.choose_scenario(recent).key, recent)
             legend = bot.choose_scenario(recent, "legend")
@@ -237,7 +237,7 @@ class ScheduleTests(unittest.TestCase):
         request = client.responses.create.call_args.kwargs
         self.assertIn(scenario.name, request["input"])
         self.assertIn("no dialogue, captions", request["instructions"])
-        self.assertIn("surreal", request["instructions"])
+        self.assertIn("visible reason friends would laugh", request["instructions"])
 
     def test_legend_idea_brainstorms_three_concepts_then_refines_one(self):
         client = Mock()

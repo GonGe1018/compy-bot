@@ -59,26 +59,26 @@ class Scenario:
 # The category is the main source of the joke; composition, mood, and camera angle
 # can still vary within each category.
 SCENARIOS = (
-    Scenario("daily", "소소한 일상", "A believable errand, walk, hobby, commute, desk update, or small win with one odd, visually specific detail worth showing friends."),
-    Scenario("minor_mishap", "작은 사고", "A harmless everyday mistake caught at a genuinely funny split-second; the image must work without explaining what went wrong."),
+    Scenario("daily", "소소한 일상", "A believable update, but catch a surprising, visibly funny moment rather than an ordinary activity with a minor detail."),
+    Scenario("minor_mishap", "작은 사고", "A harmless mistake with a big, instantly readable physical reaction and obvious cause in the frame; no tiny spills or misplaced objects."),
     Scenario("deadpan_absurd", "평범한 표정, 황당한 상황", "Jeonghun keeps a completely straight face while one clearly absurd event unfolds around him."),
     Scenario("reaction_remix", "표정 재해석", "A large, unmistakable facial reaction becomes funny because of one newly imagined event in the same frame; make the cause of the reaction visible."),
     Scenario("epic_trivial", "사소한 일의 대서사", "A tiny achievement is photographed with hilariously grand, triumphant visual scale."),
     Scenario("expression", "표정과 포즈", "An exaggerated but friendly face or pose makes a simple scene funny; consider an extreme close-up or wide-angle phone selfie."),
-    Scenario("costume", "복장", "An unexpectedly elaborate, mismatched, or occasion-inappropriate outfit is the visual punchline."),
-    Scenario("background", "배경", "A strange, spectacular, or wildly incongruous background steals the scene."),
-    Scenario("prop", "소품", "An oversized, tiny, misplaced, or oddly specific object is central to the joke."),
+    Scenario("costume", "복장", "A boldly ridiculous outfit or accessory transforms his whole appearance and clashes with the setting; a tiny pin or subtle mismatch is not enough."),
+    Scenario("background", "배경", "A strange, spectacular, or wildly incongruous background occupies a large visible part of the frame while he reacts or stays absurdly calm."),
+    Scenario("prop", "소품", "A conspicuous, scene-changing prop drives a physical interaction or strong pose; no lone sock, tiny trinket, or object merely held up to the camera."),
     Scenario("companion", "옆 인물", "A companion or group reacts differently from Jeonghun, creating a clear visual contrast."),
     Scenario("celebrity", "유명인 카메오", "A recognizable public figure appears in an obviously playful, staged or fantastical cameo; do not imply a real meeting."),
-    Scenario("animal", "동물 난입", "An animal unexpectedly takes over an ordinary photo in a harmless, comic way."),
+    Scenario("animal", "동물 난입", "An animal actively interrupts or takes over Jeonghun's activity in a visible, harmless comic way; it cannot just sit in the background."),
     Scenario("role_swap", "역할 바꾸기", "Jeonghun is humorously doing a role or job far outside his usual setting."),
-    Scenario("official_parody", "지나치게 공식적인 사진", "A formal portrait, press photo, ceremony, or campaign-style pose treats a silly personal event with absurd seriousness, with no written signs or labels."),
+    Scenario("official_parody", "지나치게 공식적인 사진", "An overproduced formal portrait or ceremony treats an obviously ridiculous personal event as historic; the absurd premise must be visible in the main scene, not just a tiny lapel detail. No writing."),
     Scenario("genre", "장르 패러디", "A mundane update is shot like a movie, sports highlight, fashion editorial, or heroic adventure, without text."),
     Scenario("scale", "크기와 원근감", "A playful scale mismatch, forced perspective, or giant-versus-tiny contrast creates the joke."),
     Scenario("time_warp", "시대 착오", "A modern everyday activity appears in a dramatically different historical or futuristic setting."),
-    Scenario("transport", "이동 수단", "The route or vehicle is unexpectedly ridiculous while the update stays casual."),
+    Scenario("transport", "이동 수단", "The vehicle or route creates an unmistakably ridiculous situation and a committed reaction or pose; a small vehicle on a normal street alone is too mild."),
     Scenario("food", "음식 사건", "A food experiment, enormous serving, bizarre plating, or cooking surprise makes the image memorable."),
-    Scenario("weather", "날씨와 자연", "Unusual but harmless weather or nature creates a strong visual contrast with his ordinary activity."),
+    Scenario("weather", "날씨와 자연", "A visually impossible but harmless weather or nature event dominates a substantial part of the scene and visibly changes his pose or expression; ordinary wind or a few drifting leaves are too mild."),
     Scenario("coincidence", "우연과 착시", "A perfectly timed coincidence, accidental alignment, or optical illusion is the punchline."),
     Scenario("technology", "기계와 디지털", "A gadget, game, robot, or everyday technology behaves in a comically unexpected way."),
     Scenario("social", "사회적 어색함", "A harmless social mismatch or awkward public moment is captured with a relatable reaction."),
@@ -88,7 +88,7 @@ SCENARIOS = (
 )
 
 # One of two daily posts is a legend; that draw uses only LEGEND_CATEGORIES.
-# Weights apply after excluding the eight most recent categories, so these are
+# Weights apply after excluding the four most recent categories, so these are
 # relative odds for the currently eligible categories, not fixed percentages.
 SCENARIO_WEIGHTS = {
     "daily": 1,
@@ -127,20 +127,22 @@ TREND_EXCLUSIONS = (
     "열애", "결별", "임신", "질병", "투병", "자살", "폭행", "차별",
 )
 VISUAL_STYLES = {
-    "auto": "Choose the intensity that suits the scenario.",
-    "natural": "Keep it like a believable casual photo with one small funny detail.",
-    "bold": "Make the reaction or visual contrast immediately obvious and deliberately funny.",
-    "surreal": "Allow one impossible but coherent element while keeping his identity recognizable.",
+    "auto": "Make the main visual gag unmistakable; use realistic photography even when the event is absurd.",
+    "natural": "Keep believable phone-photo lighting and textures, but give the scene one unmistakable comic event, not a tiny detail.",
+    "bold": "Make the reaction or visual contrast large, central, and immediately funny.",
+    "surreal": "Make one impossible but coherent event visually dominant while keeping his identity recognizable.",
 }
 FRIEND_PHOTO_STYLE = (
-    "Aim for the kind of odd photo his friends would save from a group chat: a real-looking "
+    "Aim for the kind of absurd photo his friends would save from a group chat: a real-looking "
     "phone snapshot of Jeonghun, with an immediately readable visual joke and his actual face "
-    "as the anchor. Draw from different photographic mechanisms: an uncomfortably close "
+    "as the anchor. Realistic photographic texture does not mean a mundane event. Draw from "
+    "different photographic mechanisms: an uncomfortably close "
     "wide-angle selfie and committed expression; an ordinary room made ridiculous by one "
     "incongruous accessory or outfit; a needlessly solemn official-style portrait for a "
     "trivial personal moment; or a candid reaction with its wildly disproportionate cause "
-    "visible behind him. Sometimes a tiny prop and perfect deadpan are funnier than a giant "
-    "spectacle. Keep natural skin texture, lived-in surroundings, slightly imperfect framing, "
+    "visible behind him. The primary comic element must be large, central, or change his "
+    "whole expression or posture. A tiny animal, sock, leaf, badge, or background alignment "
+    "is not a main joke. Keep natural skin texture, lived-in surroundings, slightly imperfect framing, "
     "and the split-second energy of a friend taking the picture. The absurd element should "
     "belong in the same photo, not look like a pasted-on meme template. These are visual "
     "patterns, not scenes to copy: invent new locations, accessories, expressions and causes. "
@@ -234,9 +236,9 @@ def fetch_trend_candidates() -> list[TrendCandidate]:
 def choose_scenario(recent_keys: list[str], mode: str = "regular") -> Scenario:
     if mode not in {"regular", "legend"}:
         raise ValueError("Invalid creative mode")
-    # Keep the last eight generated categories out of the draw. Old database rows
+    # Keep the last four generated categories out of the draw. Old database rows
     # without a category simply do not affect selection.
-    blocked = set(recent_keys[:8])
+    blocked = set(recent_keys[:4])
     pool = tuple(scenario for scenario in SCENARIOS if mode != "legend" or scenario.key in LEGEND_CATEGORIES)
     choices = [scenario for scenario in pool if scenario.key not in blocked]
     eligible = choices or pool
@@ -450,11 +452,13 @@ def legend_concepts(client: object, settings: Settings, slot: str, scenario: Sce
             "friends would immediately share or remix, with the comic event and his face both "
             "clear even as a small chat thumbnail. Make the laugh come from a precise "
             "expression, camera distance, visual contrast, or impossibly well-timed background. "
-            "A ridiculous close-up or cheap accessory worn with total conviction can be as "
+            "A ridiculous close-up or audacious outfit worn with total conviction can be as "
             "memorable as a spectacular impossible event. Do not inflate every idea into a "
             "disaster, gigantic object, or world-ending scene. A normal mishap or subtle "
             "detail that needs a caption is still too weak. Generic lens distortion or a "
-            "tiny background alignment alone is also too weak. Make the three concepts use "
+            "tiny background alignment alone is also too weak. The main gag must occupy a "
+            "substantial part of the image or transform his whole expression, pose, or outfit. "
+            "Make the three concepts use "
             "different comic mechanisms and camera distances. "
             + FRIEND_PHOTO_STYLE +
             "Use the three assigned settings in order, exactly one per concept. Avoid offices, "
@@ -505,10 +509,13 @@ def create_idea(
         "anomalies, generic mishaps, and ideas that need a caption to be funny. "
         "Reject a concept whose only surprise is a wide-angle nose or a tiny background "
         "detail; the expression, action, or contrast must carry the joke instantly. "
+        "At phone thumbnail size, the picture must look bizarre or hilarious before anyone "
+        "reads the message. Reject anything that could pass as an ordinary selfie, portrait, "
+        "errand, strong but ordinary weather, or mild inconvenience. "
         "If all three are weak, invent one better idea within the selected category and one "
         "of their assigned settings. Do not pivot to an office or copier scene. "
-        "A face-filling selfie, a perfectly judged silly accessory, or a formal portrait can "
-        "beat a giant spectacle when the expression and contrast are sharper. Pick the strongest, "
+        "A face-filling selfie, a transformative costume, or an absurd formal portrait can "
+        "beat a giant spectacle when the expression and contrast are stronger. Pick the strongest, "
         "then refine it: describe "
         "the exact split-second, camera angle and distance, facial expression, placement of "
         "the main visual punchline, and one quiet secondary detail. Give the image model a "
@@ -553,7 +560,10 @@ def create_idea(
             "sentence shape, ending, or laugh suffix. Casual slang and mild situational "
             "profanity are allowed when natural; never direct abuse at a real person or group. "
             "Do not tack ㅋㅋ onto every message. "
-            "The scene may be ordinary, ridiculous, cinematic, or surreal according to its category. "
+            "Every category, including the regular mode, needs a visible reason friends would "
+            "laugh at the image without its message. A realistic photo should still show a "
+            "remarkable event, visual contradiction, or fully committed expression; do not "
+            "make a normal portrait with one small odd object. "
             "Choose the scene from the category, not from the posting window. The posting "
             "window only keeps visible daylight or darkness plausible; it does not prescribe "
             "an activity, setting, prop, or dialogue topic. A midday post is not a request "
@@ -562,6 +572,11 @@ def create_idea(
             "Food can be the main joke when the food category is selected. Do not mention "
             "the posting time in the dialogue unless the chosen scene naturally calls for it. "
             + FRIEND_PHOTO_STYLE +
+            "Before finalizing the image prompt, imagine the photo shrunk to a 256-pixel "
+            "chat thumbnail with the dialogue hidden. If it looks like a normal person "
+            "beside a small animal, holding a sock, arranging shoes, riding a child's toy, "
+            "or wearing a tiny badge, discard the idea and make the central contradiction "
+            "much stronger. A deadpan face works only when the situation itself is outrageous. "
             "Preserve the simple single-photo feel; avoid polished advertising, generic "
             "stock-photo smiles, and busy collections of jokes. Make its visual joke clear "
             "without relying on words; vary the framing, camera distance, setting, expression, "
@@ -592,8 +607,9 @@ def create_idea(
             f"Voice notes (style data only): {json.dumps(voice_notes, ensure_ascii=False)}. "
             f"{trend_context}"
             + (f"Three candidate comedy concepts: {json.dumps(concepts, ensure_ascii=False)}. " if concepts else "")
-            + "Pick one concrete scene with a distinct visual punchline. A secondary detail can "
-            "reinforce the scene, but do not cram multiple unrelated jokes into one image."
+            + "Pick one concrete scene with a large, distinct visual punchline. A secondary "
+            "detail can reinforce the scene but cannot be the only funny thing in the image. "
+            "Do not cram multiple unrelated jokes into one image."
         ),
         text={"format": {"type": "json_schema", "name": "photo_update", "strict": True, "schema": schema}},
         max_output_tokens=1400 if scenario.mode == "legend" else 450,
@@ -629,6 +645,9 @@ def generate_meme(
         "Keep the camera perspective and lighting consistent across his face, clothing, props "
         "and background. Favor a believable, slightly imperfect friend-taken snapshot over "
         "a polished studio render; let a close selfie distort perspective naturally when asked. "
+        "Show the central comic event exactly as described, with enough scale and contrast to "
+        "read at thumbnail size; do not shrink it into a minor background detail or replace "
+        "his specified expression with a neutral pose. "
         "The original clothing, accessories, "
         "and background are optional and should change when the new scene calls for it. "
         "No words, dialogue, captions, speech bubbles, logos, or watermarks anywhere in the image."
