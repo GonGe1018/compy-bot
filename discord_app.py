@@ -98,11 +98,15 @@ class PreviewStore:
                     image_path TEXT NOT NULL,
                     dialogue TEXT NOT NULL,
                     slot TEXT NOT NULL,
+                    rarity TEXT NOT NULL DEFAULT 'N',
                     created_at TEXT NOT NULL,
                     state TEXT NOT NULL,
                     message_id TEXT
                 )"""
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(previews)")}
+            if "rarity" not in columns:
+                connection.execute("ALTER TABLE previews ADD COLUMN rarity TEXT NOT NULL DEFAULT 'N'")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -116,15 +120,15 @@ class PreviewStore:
 
     def add(
         self, preview_id: str, guild_id: int, owner_id: int,
-        image_path: Path, dialogue: str, slot: str,
+        image_path: Path, dialogue: str, slot: str, rarity: str = "N",
     ) -> None:
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO previews
-                (preview_id, guild_id, owner_id, image_path, dialogue, slot, created_at, state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'ready')""",
+                (preview_id, guild_id, owner_id, image_path, dialogue, slot, rarity, created_at, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready')""",
                 (preview_id, str(guild_id), str(owner_id), str(image_path), dialogue, slot,
-                 datetime.now(timezone.utc).isoformat()),
+                 rarity, datetime.now(timezone.utc).isoformat()),
             )
 
     def get(self, preview_id: str) -> sqlite3.Row | None:
@@ -259,11 +263,12 @@ def migrate_legacy_jobs(store: BroadcastStore) -> None:
             store.connection.execute(
                 """INSERT OR IGNORE INTO jobs
                 (day, slot, scheduled_at, window_spec, status, image_path, caption,
-                 dialogue, category, creative_mode, message_id, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 dialogue, category, creative_mode, rarity, message_id, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row["day"], row["slot"], row["scheduled_at"], row["window_spec"],
                  status, image_path, row["caption"], row["dialogue"], row["category"],
                  row["creative_mode"] if "creative_mode" in row.keys() else None,
+                 row["rarity"] if "rarity" in row.keys() else None,
                  row["message_id"], row["error"]),
             )
         for path, legacy_jobs in legacy_rows:
@@ -329,6 +334,7 @@ def process_broadcast(
             day, slot, status = job["day"], job["slot"], job["status"]
             image_path = Path(job["image_path"]) if job["image_path"] else core.data_dir() / "output" / f"{day}-{slot}.png"
             dialogue = job["dialogue"] or job["caption"] or "정훈봇 짤"
+            rarity = job["rarity"] or ("SR" if job["creative_mode"] == "legend" else "N")
             if status == "queued" and local_now > scheduled + core.MAX_LATE:
                 store.transition(day, slot, "queued", "skipped", error="Missed posting grace period")
                 continue
@@ -340,9 +346,10 @@ def process_broadcast(
                         store.recent_categories(), job["creative_mode"] or "regular"
                     )
                     dialogue = generate(settings, slot, image_path, store.recent_dialogues(), scenario)
+                    rarity = scenario.rarity
                     store.transition(
                         day, slot, "generating", "ready", image_path=str(image_path),
-                        dialogue=dialogue, category=scenario.key,
+                        dialogue=dialogue, category=scenario.key, rarity=rarity,
                     )
                     status = "ready"
                 except Exception as exc:
@@ -367,7 +374,7 @@ def process_broadcast(
                     discord_channel_id=current["channel_id"], discord_webhook_url=None,
                 )
                 try:
-                    message_id = post(destination, image_path, slot, dialogue)
+                    message_id = post(destination, image_path, slot, dialogue, rarity)
                     store.finish_delivery(day, slot, guild_id, "sent", message_id)
                 except core.PostingPaused:
                     store.finish_delivery(day, slot, guild_id, "paused")
@@ -543,11 +550,11 @@ class PublishButton(discord.ui.Button):
         await panel.publish(interaction, self)
 
 
-class PreviewView(discord.ui.View):
+class PreviewView(discord.ui.LayoutView):
     def __init__(
         self, registry: GuildRegistry, previews: PreviewStore, settings: core.Settings,
         preview_id: str, guild_id: int, owner_id: int, image_path: Path,
-        dialogue: str, slot: str,
+        dialogue: str, slot: str, rarity: str = "N",
     ):
         super().__init__(timeout=None)
         self.registry = registry
@@ -559,7 +566,13 @@ class PreviewView(discord.ui.View):
         self.image_path = image_path
         self.dialogue = dialogue
         self.slot = slot
-        self.add_item(PublishButton(preview_id))
+        self.rarity = rarity
+        card = discord.ui.Container(accent_color=core.RARITY_COLORS[rarity])
+        card.add_item(discord.ui.TextDisplay(dialogue))
+        card.add_item(discord.ui.MediaGallery().add_item(media=f"attachment://{image_path.name}"))
+        card.add_item(discord.ui.TextDisplay(core.rarity_line(rarity, settings.card_display_name)))
+        self.add_item(card)
+        self.add_item(discord.ui.ActionRow(PublishButton(preview_id)))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.owner_id and interaction.guild_id == self.guild_id and is_operator(interaction, self.settings):
@@ -598,7 +611,8 @@ class PreviewView(discord.ui.View):
         )
         try:
             message_id = await asyncio.to_thread(
-                core.post_to_discord, destination, self.image_path, self.slot, self.dialogue
+                core.post_to_discord, destination, self.image_path, self.slot,
+                self.dialogue, self.rarity,
             )
         except Exception as exc:
             self.previews.finish(self.preview_id, "uncertain")
@@ -622,7 +636,7 @@ async def scenario_autocomplete(
         if query in scenario.name.casefold() or query in scenario.key.casefold()
     ]
     if not query:
-        matches.sort(key=lambda scenario: core.FAVORITE_WEIGHTS.get(scenario.key, 1), reverse=True)
+        matches.sort(key=lambda scenario: core.SCENARIO_WEIGHTS[scenario.key], reverse=True)
     return [
         app_commands.Choice(name=scenario.name, value=scenario.key)
         for scenario in matches[:25]
@@ -664,7 +678,7 @@ class JunghoonCommands(app_commands.Group):
 
     @app_commands.command(name="미리보기", description="짤을 한 장 생성합니다 · OpenAI API 비용 발생")
     @app_commands.describe(유형="비워두면 무작위 유형으로 생성합니다")
-    @app_commands.describe(분위기="사진의 과장 정도", 시간대="사진의 낮·밤 조명만 선택", 이슈="최근 밈 패러디 후보를 확인할지", 목표="일반 짤 또는 레전드 짤 기획")
+    @app_commands.describe(분위기="사진의 과장 정도", 시간대="사진의 낮·밤 조명만 선택", 이슈="최근 밈 패러디 후보를 확인할지", 목표="일반 짤 또는 레전드 짤 기획", 등급="비워두면 확률에 따라 추첨")
     @app_commands.autocomplete(유형=scenario_autocomplete)
     @app_commands.choices(
         분위기=[
@@ -686,6 +700,13 @@ class JunghoonCommands(app_commands.Group):
             app_commands.Choice(name="일반 짤", value="regular"),
             app_commands.Choice(name="레전드 짤 도전", value="legend"),
         ],
+        등급=[
+            app_commands.Choice(name="N · 노멀", value="N"),
+            app_commands.Choice(name="R · 레어", value="R"),
+            app_commands.Choice(name="SR · 슈퍼 레어", value="SR"),
+            app_commands.Choice(name="SSR · 초특급 레어", value="SSR"),
+            app_commands.Choice(name="UR · 울트라 레어", value="UR"),
+        ],
     )
     async def preview(
         self, interaction: discord.Interaction, 유형: str | None = None,
@@ -693,6 +714,7 @@ class JunghoonCommands(app_commands.Group):
         시간대: app_commands.Choice[str] | None = None,
         이슈: app_commands.Choice[str] | None = None,
         목표: app_commands.Choice[str] | None = None,
+        등급: app_commands.Choice[str] | None = None,
     ) -> None:
         if await reject_if_not_operator(interaction, self.settings):
             return
@@ -703,6 +725,13 @@ class JunghoonCommands(app_commands.Group):
         ) if 유형 else None
         if 유형 and selected is None:
             await interaction.response.send_message("유형 목록에서 선택해 주세요.", ephemeral=True)
+            return
+        mode = 목표.value if 목표 else "regular"
+        selected_rarity = 등급.value if 등급 else None
+        if selected_rarity and selected_rarity not in core.RARITY_WEIGHTS[mode]:
+            await interaction.response.send_message(
+                "일반 짤은 N~SSR, 레전드 짤은 SR~UR 등급을 선택할 수 있어요.", ephemeral=True
+            )
             return
         lock = self._preview_locks.setdefault(guild_id, asyncio.Lock())
         if lock.locked():
@@ -719,8 +748,10 @@ class JunghoonCommands(app_commands.Group):
                 store = shared_store()
                 try:
                     migrate_legacy_jobs(store)
-                    mode = 목표.value if 목표 else "regular"
-                    scenario = replace(selected, mode=mode) if selected else core.choose_scenario(store.recent_categories(), mode)
+                    scenario = (
+                        core.with_rarity(selected, mode, selected_rarity)
+                        if selected else core.choose_scenario(store.recent_categories(), mode, selected_rarity)
+                    )
                     previous = [
                         *self.previews.recent_dialogues(guild_id),
                         *store.recent_dialogues(),
@@ -731,13 +762,14 @@ class JunghoonCommands(app_commands.Group):
                     core.generate_meme, self.settings, slot, path, previous, scenario,
                     style, trend_mode,
                 )
-                self.previews.add(preview_id, guild_id, interaction.user.id, path, dialogue, slot)
+                self.previews.add(
+                    preview_id, guild_id, interaction.user.id, path, dialogue, slot, scenario.rarity,
+                )
                 await interaction.followup.send(
-                    content=f"**유형:** {scenario.name}\n**목표:** {'레전드 짤 도전' if scenario.mode == 'legend' else '일반 짤'}\n**정훈봇 대사:** {dialogue}",
                     file=discord.File(path),
                     view=PreviewView(
                         self.registry, self.previews, self.settings, preview_id,
-                        guild_id, interaction.user.id, path, dialogue, slot,
+                        guild_id, interaction.user.id, path, dialogue, slot, scenario.rarity,
                     ),
                     ephemeral=True,
                     allowed_mentions=discord.AllowedMentions.none(),
@@ -768,7 +800,7 @@ class JunghoonClient(discord.Client):
             self.add_view(PreviewView(
                 self.registry, self.previews, self.settings, row["preview_id"],
                 int(row["guild_id"]), int(row["owner_id"]), Path(row["image_path"]),
-                row["dialogue"], row["slot"],
+                row["dialogue"], row["slot"], row["rarity"],
             ))
         await self.tree.sync()
         self.scheduler.start()

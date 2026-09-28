@@ -54,6 +54,7 @@ class Scenario:
     name: str
     direction: str
     mode: str = "regular"
+    rarity: str = "N"
 
 
 # The category is the main source of the joke; composition, mood, and camera angle
@@ -173,6 +174,25 @@ LEGEND_CATEGORIES = {
     "background", "celebrity", "role_swap", "official_parody", "genre", "scale",
     "time_warp", "weather", "coincidence", "sport", "event", "surreal",
 }
+RARITY_WEIGHTS = {
+    "regular": {"N": 55, "R": 35, "SR": 9, "SSR": 1},
+    "legend": {"SR": 80, "SSR": 18, "UR": 2},
+}
+RARITY_NAMES = {
+    "N": "노멀", "R": "레어", "SR": "슈퍼 레어",
+    "SSR": "초특급 레어", "UR": "울트라 레어",
+}
+RARITY_COLORS = {
+    "N": 0x87909C, "R": 0x3498DB, "SR": 0x9B59B6,
+    "SSR": 0xF1C40F, "UR": 0xFF4DA6,
+}
+RARITY_DIRECTIONS = {
+    "N": "The image must still have a clear joke; make it a sharp candid reaction or visual coincidence rather than a bland daily update.",
+    "R": "Make the visual contradiction immediately obvious and more surprising than an ordinary funny snapshot.",
+    "SR": "Make this a memorable, instantly shareable photo with a bold central gag and a fully committed expression or pose.",
+    "SSR": "Make the scene exceptionally audacious and iconic: an unmistakable visual escalation, while keeping one coherent friend-taken photo.",
+    "UR": "Aim for a once-in-a-while, spectacularly absurd image whose setting and expression are unforgettable even at thumbnail size; keep it one believable-looking photo.",
+}
 TIME_CONTEXT = {
     "lunch": (
         "Daytime posting window (11:30-13:30). If the outdoors or a window is visible, "
@@ -233,7 +253,9 @@ def fetch_trend_candidates() -> list[TrendCandidate]:
         return []
 
 
-def choose_scenario(recent_keys: list[str], mode: str = "regular") -> Scenario:
+def choose_scenario(
+    recent_keys: list[str], mode: str = "regular", rarity: str | None = None,
+) -> Scenario:
     if mode not in {"regular", "legend"}:
         raise ValueError("Invalid creative mode")
     # Keep the last four generated categories out of the draw. Old database rows
@@ -243,7 +265,60 @@ def choose_scenario(recent_keys: list[str], mode: str = "regular") -> Scenario:
     choices = [scenario for scenario in pool if scenario.key not in blocked]
     eligible = choices or pool
     chosen = random.choices(eligible, weights=[SCENARIO_WEIGHTS[item.key] for item in eligible], k=1)[0]
-    return replace(chosen, mode=mode)
+    return with_rarity(chosen, mode, rarity)
+
+
+def choose_rarity(mode: str) -> str:
+    if mode not in RARITY_WEIGHTS:
+        raise ValueError("Invalid creative mode")
+    weights = RARITY_WEIGHTS[mode]
+    return random.choices(tuple(weights), weights=tuple(weights.values()), k=1)[0]
+
+
+def with_rarity(scenario: Scenario, mode: str, rarity: str | None = None) -> Scenario:
+    if mode not in RARITY_WEIGHTS or (rarity is not None and rarity not in RARITY_WEIGHTS[mode]):
+        raise ValueError("Invalid rarity for creative mode")
+    return replace(scenario, mode=mode, rarity=rarity or choose_rarity(mode))
+
+
+def rarity_footer(rarity: str, display_name: str) -> str:
+    return f"{rarity} 등급 · {RARITY_NAMES[rarity]} {display_name} 등장!"
+
+
+RARITY_DECORATIONS = {
+    "N": ("▫️", ""),
+    "R": ("🔹", "✦"),
+    "SR": ("💜", "✦✦"),
+    "SSR": ("🌟", "✧✦✧"),
+    "UR": ("🌈", "✦✧✦"),
+}
+
+
+def rarity_line(rarity: str, display_name: str) -> str:
+    icon, decoration = RARITY_DECORATIONS[rarity]
+    label = rarity_footer(rarity, display_name)
+    if rarity == "N":
+        return f"-# {icon} {label}"
+    styled = {
+        "R": f"**{label}**",
+        "SR": f"***{label}***",
+        "SSR": f"**__{label}__**",
+        "UR": f"__***{label}***__",
+    }[rarity]
+    return f"-# {icon} {decoration} {styled} {decoration}"
+
+
+def card_components(image_name: str, dialogue: str, rarity: str, display_name: str) -> list[dict]:
+    """Discord Components V2: dialogue, photo, then a small rarity line."""
+    return [{
+        "type": 17,
+        "accent_color": RARITY_COLORS[rarity],
+        "components": [
+            {"type": 10, "content": dialogue},
+            {"type": 12, "items": [{"media": {"url": f"attachment://{image_name}"}}]},
+            {"type": 10, "content": rarity_line(rarity, display_name)},
+        ],
+    }]
 
 
 @dataclass(frozen=True)
@@ -260,6 +335,7 @@ class Settings:
     discord_channel_id: str | None
     discord_webhook_url: str | None
     operator_ids: frozenset[int] = frozenset()
+    card_display_name: str = "정훈"
 
 
 def parse_window(name: str, value: str) -> Window:
@@ -287,6 +363,9 @@ def load_settings() -> Settings:
     operator_parts = [part.strip() for part in operator_text.split(",") if part.strip()]
     if any(not part.isdecimal() for part in operator_parts):
         raise ValueError("BOT_OPERATOR_IDS must be comma-separated numeric Discord user IDs")
+    card_display_name = " ".join(os.getenv("CARD_DISPLAY_NAME", "정훈").split()) or "정훈"
+    if len(card_display_name) > 32:
+        raise ValueError("CARD_DISPLAY_NAME must be 32 characters or fewer")
     return Settings(
         timezone=ZoneInfo(os.getenv("TIMEZONE", "Asia/Seoul")),
         windows=(
@@ -303,6 +382,7 @@ def load_settings() -> Settings:
         discord_channel_id=os.getenv("DISCORD_CHANNEL_ID"),
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
         operator_ids=frozenset(int(part) for part in operator_parts),
+        card_display_name=card_display_name,
     )
 
 
@@ -334,6 +414,7 @@ class JobStore:
                 dialogue TEXT,
                 category TEXT,
                 creative_mode TEXT,
+                rarity TEXT,
                 message_id TEXT,
                 error TEXT,
                 PRIMARY KEY (day, slot)
@@ -348,6 +429,8 @@ class JobStore:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN category TEXT")
         if "creative_mode" not in columns:
             self.connection.execute("ALTER TABLE jobs ADD COLUMN creative_mode TEXT")
+        if "rarity" not in columns:
+            self.connection.execute("ALTER TABLE jobs ADD COLUMN rarity TEXT")
         self.connection.commit()
 
     def ensure_day(self, day: date, settings: Settings) -> None:
@@ -472,6 +555,7 @@ def legend_concepts(client: object, settings: Settings, slot: str, scenario: Sce
         input=(
             f"Lighting context: {TIME_CONTEXT[slot]} "
             f"Scenario category: {scenario.name}. Direction: {scenario.direction} "
+            f"Rarity {scenario.rarity}: {RARITY_DIRECTIONS[scenario.rarity]} "
             f"Required locations for first, second, third concepts: {json.dumps(locations)}. "
             "Vary the comic mechanism and camera distance across all three."
         ),
@@ -491,6 +575,8 @@ def create_idea(
 ) -> tuple[str, str]:
     if slot not in TIME_CONTEXT:
         raise ValueError("Invalid posting window")
+    if scenario.mode not in RARITY_WEIGHTS or scenario.rarity not in RARITY_WEIGHTS[scenario.mode]:
+        raise ValueError("Invalid rarity for creative mode")
     voice_path = data_dir() / "persona.txt"
     voice_notes = voice_path.read_text(encoding="utf-8")[:4000] if voice_path.is_file() else ""
     if style not in VISUAL_STYLES or trend_mode not in {"auto", "off", "try"}:
@@ -599,6 +685,7 @@ def create_idea(
             f"Posting window (lighting context only): {TIME_CONTEXT[slot]} "
             f"Main scenario category: {scenario.name}. "
             f"Creative direction: {scenario.direction} "
+            f"Rarity {scenario.rarity}: {RARITY_DIRECTIONS[scenario.rarity]} "
             f"Visual intensity: {VISUAL_STYLES[style]} "
             f"Dialogue approach for this photo: {dialogue_move} "
             f"Recent messages: {json.dumps(previous[:12], ensure_ascii=False)}. "
@@ -677,17 +764,23 @@ def validate_discord_destination(settings: Settings) -> None:
         raise RuntimeError("Set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID, or DISCORD_WEBHOOK_URL in .env")
 
 
-def post_to_discord(settings: Settings, image_path: Path, slot: str, dialogue: str) -> str:
+def post_to_discord(
+    settings: Settings, image_path: Path, slot: str, dialogue: str, rarity: str = "N",
+) -> str:
     validate_discord_destination(settings)
+    payload = {
+        "flags": 32768,
+        "components": card_components(image_path.name, dialogue, rarity, settings.card_display_name),
+        "allowed_mentions": {"parse": []},
+    }
     if settings.discord_bot_token:
         url = f"https://discord.com/api/v10/channels/{settings.discord_channel_id}/messages"
         headers = {"Authorization": f"Bot {settings.discord_bot_token}"}
-        payload = {"content": dialogue, "allowed_mentions": {"parse": []}}
         params = None
     elif settings.discord_webhook_url:
         url = settings.discord_webhook_url
         headers = None
-        payload = {"username": "정훈봇", "content": dialogue, "allowed_mentions": {"parse": []}}
+        payload["username"] = "정훈봇"
         params = {"wait": "true"}
     with image_path.open("rb") as image:
         response = requests.post(
@@ -710,7 +803,7 @@ def process_jobs(
     settings: Settings,
     now: datetime,
     generate: Callable[[Settings, str, Path, list[str], Scenario], str] = generate_meme,
-    post: Callable[[Settings, Path, str, str], str] = post_to_discord,
+    post: Callable[[Settings, Path, str, str, str], str] = post_to_discord,
 ) -> None:
     local_now = now.astimezone(settings.timezone)
     previous_day = local_now.date() - timedelta(days=1)
@@ -720,6 +813,7 @@ def process_jobs(
         scheduled = datetime.fromisoformat(job["scheduled_at"])
         day, slot, status = job["day"], job["slot"], job["status"]
         dialogue = job["dialogue"] or job["caption"] or "정훈봇 짤"
+        rarity = job["rarity"] or ("SR" if job["creative_mode"] == "legend" else "N")
         image_path = Path(job["image_path"]) if job["image_path"] else data_dir() / "output" / f"{day}-{slot}.png"
         if status in {"queued", "ready"} and local_now > scheduled + MAX_LATE:
             store.transition(day, slot, status, "skipped", error="Missed posting grace period")
@@ -730,7 +824,11 @@ def process_jobs(
             try:
                 scenario = choose_scenario(store.recent_categories(), job["creative_mode"] or "regular")
                 dialogue = generate(settings, slot, image_path, store.recent_dialogues(), scenario)
-                store.transition(day, slot, "generating", "ready", image_path=str(image_path), dialogue=dialogue, category=scenario.key)
+                rarity = scenario.rarity
+                store.transition(
+                    day, slot, "generating", "ready", image_path=str(image_path),
+                    dialogue=dialogue, category=scenario.key, rarity=scenario.rarity,
+                )
                 status = "ready"
             except Exception as exc:
                 LOG.exception("Failed to generate %s %s", day, slot)
@@ -741,7 +839,7 @@ def process_jobs(
             if not store.transition(day, slot, "ready", "posting"):
                 continue
             try:
-                message_id = post(settings, image_path, slot, dialogue)
+                message_id = post(settings, image_path, slot, dialogue, rarity)
                 store.transition(day, slot, "posting", "sent", message_id=message_id, error=None)
                 LOG.info("Posted %s %s as Discord message %s", day, slot, message_id)
             except PostingPaused:
@@ -801,7 +899,7 @@ def main() -> None:
             store.close()
         print(f"Saved {image_path} [{scenario.name}] - 정훈봇: {dialogue}")
         if args.command == "send-now":
-            message_id = post_to_discord(settings, image_path, args.slot, dialogue)
+            message_id = post_to_discord(settings, image_path, args.slot, dialogue, scenario.rarity)
             print(f"Posted Discord message {message_id}")
     elif args.command == "retry-post":
         from discord_app import shared_store

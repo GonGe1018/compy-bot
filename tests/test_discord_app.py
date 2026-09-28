@@ -1,6 +1,8 @@
 import asyncio
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,6 +49,23 @@ class GuildConfigurationTests(unittest.TestCase):
         self.assertEqual(self.registry.get(202)["channel_id"], "2002")
         self.assertEqual(self.registry.active_guilds(), [101])
 
+    def test_existing_preview_database_adds_rarity_without_losing_buttons(self):
+        legacy_path = self.root / "old-previews.sqlite3"
+        with closing(sqlite3.connect(legacy_path)) as connection, connection:
+            connection.execute(
+                "CREATE TABLE previews (preview_id TEXT PRIMARY KEY, guild_id TEXT NOT NULL, "
+                "owner_id TEXT NOT NULL, image_path TEXT NOT NULL, dialogue TEXT NOT NULL, "
+                "slot TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL, message_id TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO previews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("old", "101", "77", str(self.root / "old.png"), "옛 대사", "lunch",
+                 datetime.now(ZoneInfo("UTC")).isoformat(), "ready", None),
+            )
+        migrated = discord_app.PreviewStore(legacy_path)
+        self.assertEqual(migrated.get("old")["rarity"], "N")
+        self.assertEqual(migrated.get("old")["state"], "ready")
+
     def test_native_slash_group_and_admin_settings_panel_are_registered(self):
         client = discord_app.JunghoonClient(self.settings, self.registry, self.previews)
         group = client.tree.get_commands()[0]
@@ -55,7 +74,7 @@ class GuildConfigurationTests(unittest.TestCase):
         self.assertIsNone(group.default_permissions)
         self.assertEqual(
             [parameter.name for parameter in group.get_command("미리보기").parameters],
-            ["유형", "분위기", "시간대", "이슈", "목표"],
+            ["유형", "분위기", "시간대", "이슈", "목표", "등급"],
         )
         panel = discord_app.SettingsView(self.registry, self.settings, owner_id=1, guild_id=101)
         self.assertTrue(any(isinstance(item, discord_app.ChannelPicker) for item in panel.children))
@@ -77,12 +96,12 @@ class GuildConfigurationTests(unittest.TestCase):
         image_path = self.root / "preview.png"
         image_path.write_bytes(b"image")
         self.registry.set_channel(101, 1001)
-        self.previews.add("preview123", 101, 77, image_path, "정훈 대사", "dawn")
+        self.previews.add("preview123", 101, 77, image_path, "정훈 대사", "dawn", "SSR")
         row = discord_app.PreviewStore(self.root / "previews.sqlite3").recent()[0]
         view = discord_app.PreviewView(
             self.registry, self.previews, self.settings, row["preview_id"],
             int(row["guild_id"]), int(row["owner_id"]), Path(row["image_path"]),
-            row["dialogue"], row["slot"],
+            row["dialogue"], row["slot"], row["rarity"],
         )
         self.assertTrue(view.is_persistent())
         interaction = SimpleNamespace(
@@ -93,8 +112,10 @@ class GuildConfigurationTests(unittest.TestCase):
 
         async def publish_twice():
             with patch.object(discord_app.core, "post_to_discord", return_value="message-1") as post:
-                await view.publish(interaction, view.children[0])
-                await view.publish(interaction, view.children[0])
+                button = next(item for item in view.walk_children() if isinstance(item, discord_app.PublishButton))
+                await view.publish(interaction, button)
+                await view.publish(interaction, button)
+                self.assertEqual(post.call_args.args[-1], "SSR")
                 return post.call_count
 
         self.assertEqual(asyncio.run(publish_twice()), 1)
@@ -163,6 +184,8 @@ class GuildConfigurationTests(unittest.TestCase):
                     discord_app.app_commands.Choice(name="대놓고 웃긴 사진", value="bold"),
                     discord_app.app_commands.Choice(name="새벽", value="dawn"),
                     discord_app.app_commands.Choice(name="이슈 없이", value="off"),
+                    None,
+                    discord_app.app_commands.Choice(name="SR · 슈퍼 레어", value="SR"),
                 )
 
         asyncio.run(run_preview())
@@ -171,6 +194,14 @@ class GuildConfigurationTests(unittest.TestCase):
         sent = interaction.followup.send.await_args.kwargs
         self.assertEqual(sent["view"].slot, "dawn")
         self.assertEqual(sent["view"].dialogue, "이거 봐 ㅋㅋ")
+        self.assertEqual(sent["view"].rarity, "SR")
+        components = sent["view"].to_components()
+        self.assertEqual([item["type"] for item in components[0]["components"]], [10, 12, 10])
+        self.assertEqual(components[0]["components"][0]["content"], "이거 봐 ㅋㅋ")
+        self.assertEqual(components[0]["components"][1]["items"][0]["media"]["url"],
+                         f"attachment://{sent['view'].image_path.name}")
+        self.assertIn("SR 등급", components[0]["components"][2]["content"])
+        self.assertEqual(self.previews.get(sent["view"].preview_id)["rarity"], "SR")
         self.assertEqual(self.previews.get(sent["view"].preview_id)["state"], "ready")
         sent["file"].close()
 
@@ -199,20 +230,23 @@ class GuildConfigurationTests(unittest.TestCase):
                 path.write_bytes(b"shared image")
                 return "정훈 대사"
 
-            def post(destination, path, _slot, dialogue):
+            def post(destination, path, _slot, dialogue, rarity):
                 self.assertEqual(path.read_bytes(), b"shared image")
                 self.assertEqual(dialogue, "정훈 대사")
-                calls["posts"].append(destination.discord_channel_id)
+                calls["posts"].append((destination.discord_channel_id, rarity))
                 return f"message-{destination.discord_channel_id}"
 
             discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
             discord_app.process_broadcast(self.registry, self.settings, now, generate, post)
-            self.assertEqual(calls, {"generate": 1, "posts": ["1001", "2002"]})
+            self.assertEqual(calls["generate"], 1)
+            self.assertEqual([channel for channel, _ in calls["posts"]], ["1001", "2002"])
+            self.assertEqual(calls["posts"][0][1], calls["posts"][1][1])
             store = discord_app.shared_store()
             try:
                 lunch = next(row for row in store.jobs_for_day(now.date()) if row["slot"] == "lunch")
                 self.assertEqual(lunch["status"], "ready")
                 self.assertEqual(lunch["dialogue"], "정훈 대사")
+                self.assertEqual(lunch["rarity"], calls["posts"][0][1])
                 deliveries = store.connection.execute(
                     "SELECT guild_id, status FROM deliveries WHERE day = ? AND slot = 'lunch' ORDER BY guild_id",
                     (now.date().isoformat(),),
@@ -246,7 +280,7 @@ class GuildConfigurationTests(unittest.TestCase):
                 path.write_bytes(b"shared image")
                 return "정훈 대사"
 
-            def post(destination, _path, _slot, _dialogue):
+            def post(destination, _path, _slot, _dialogue, _rarity):
                 attempts.append(destination.discord_channel_id)
                 if destination.discord_channel_id == "1001":
                     raise TimeoutError("Response lost")
@@ -305,7 +339,7 @@ class GuildConfigurationTests(unittest.TestCase):
                 patch.object(bot, "data_dir", return_value=self.root):
             posts = []
 
-            def post(destination, path, _slot, dialogue):
+            def post(destination, path, _slot, dialogue, _rarity):
                 posts.append(destination.discord_channel_id)
                 self.assertEqual(path.read_bytes(), b"old image")
                 self.assertEqual(dialogue, "공유 대사")

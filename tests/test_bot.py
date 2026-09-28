@@ -117,9 +117,10 @@ class ScheduleTests(unittest.TestCase):
             path.write_bytes(b"fake image")
             return "이거 내가 해냈다고?"
 
-        def post(_settings, _path, _slot, dialogue):
+        def post(_settings, _path, _slot, dialogue, rarity):
             calls["post"] += 1
             self.assertEqual(dialogue, "이거 내가 해냈다고?")
+            self.assertIn(rarity, bot.RARITY_WEIGHTS[generated_modes[0]])
             return "discord-message-1"
 
         with patch.object(bot, "ROOT", self.root):
@@ -132,6 +133,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(updated["status"], "sent")
         self.assertEqual(updated["message_id"], "discord-message-1")
         self.assertEqual(updated["dialogue"], "이거 내가 해냈다고?")
+        self.assertIn(updated["rarity"], bot.RARITY_WEIGHTS[updated["creative_mode"]])
         self.assertIn(updated["category"], {scenario.key for scenario in bot.SCENARIOS})
         self.assertEqual(generated_modes, [updated["creative_mode"]])
 
@@ -147,7 +149,7 @@ class ScheduleTests(unittest.TestCase):
             path.write_bytes(b"fake image")
             return "이거 내가 해냈다고?"
 
-        def post(_settings, _path, _slot, _dialogue):
+        def post(_settings, _path, _slot, _dialogue, _rarity):
             attempts.append(1)
             raise TimeoutError("Response lost")
 
@@ -169,7 +171,12 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(message_id, "message-123")
         payload = json.loads(request.call_args.kwargs["data"]["payload_json"])
         self.assertEqual(payload["username"], "정훈봇")
-        self.assertEqual(payload["content"], "@everyone 오늘은 내가 이겼다")
+        self.assertEqual(payload["flags"], 32768)
+        card = payload["components"][0]
+        self.assertEqual(card["components"][0]["content"], "@everyone 오늘은 내가 이겼다")
+        self.assertEqual(card["components"][1]["items"][0]["media"]["url"], "attachment://meme.png")
+        self.assertIn("N 등급", card["components"][2]["content"])
+        self.assertNotIn("content", payload)
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
 
     def test_bot_token_posts_as_bot_user_to_selected_channel(self):
@@ -189,7 +196,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[0], "https://discord.com/api/v10/channels/123456789012345678/messages")
         self.assertEqual(request.call_args.kwargs["headers"], {"Authorization": "Bot test-token"})
         payload = json.loads(request.call_args.kwargs["data"]["payload_json"])
-        self.assertEqual(payload["content"], "오늘은 좀 괜찮은데")
+        self.assertEqual(payload["components"][0]["components"][0]["content"], "오늘은 좀 괜찮은데")
         self.assertNotIn("username", payload)
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
 
@@ -222,6 +229,16 @@ class ScheduleTests(unittest.TestCase):
             legend = bot.choose_scenario(recent, "legend")
             self.assertIn(legend.key, bot.LEGEND_CATEGORIES)
             self.assertNotIn(legend.key, recent)
+            self.assertIn(legend.rarity, bot.RARITY_WEIGHTS["legend"])
+
+    def test_card_rarity_changes_accent_and_small_label_without_changing_photo(self):
+        normal = bot.card_components("photo.png", "오늘 뭐냐", "N", "정훈")[0]
+        ultra = bot.card_components("photo.png", "오늘 뭐냐", "UR", "정훈")[0]
+        self.assertNotEqual(normal["accent_color"], ultra["accent_color"])
+        self.assertEqual(normal["components"][:2], ultra["components"][:2])
+        self.assertTrue(normal["components"][2]["content"].startswith("-# "))
+        self.assertIn("UR 등급", ultra["components"][2]["content"])
+        self.assertIn("***", ultra["components"][2]["content"])
 
     def test_idea_uses_selected_category_and_keeps_words_out_of_photo(self):
         client = Mock()
@@ -251,7 +268,7 @@ class ScheduleTests(unittest.TestCase):
                 "dialogue": "아 시바 이게 뭐냐", "image_prompt": "One candid, funny photo."
             })),
         ]
-        scenario = replace(bot.SCENARIOS[0], mode="legend")
+        scenario = bot.with_rarity(bot.SCENARIOS[0], "legend", "SR")
         with patch.object(bot.random, "random", return_value=1):
             dialogue, prompt = bot.create_idea(client, self.settings, "lunch", [], scenario)
         self.assertEqual((dialogue, prompt), ("아 시바 이게 뭐냐", "One candid, funny photo."))
