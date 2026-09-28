@@ -62,8 +62,8 @@ class Scenario:
 
 # Every category names a visible comic event, not merely a photographic subject.
 SCENARIOS = (
-    Scenario("fantasy_awakening", "이세계 능력 각성", "A shamelessly grand fantasy awakening starring Jeonghun."),
-    Scenario("final_boss", "최종보스 등장", "Jeonghun as an outrageously self-serious fantasy final boss."),
+    Scenario("fantasy_awakening", "이세계 능력 각성", "Jeonghun suddenly displays overwhelming fantasy power; the over-serious transformation itself is the joke."),
+    Scenario("final_boss", "최종보스 등장", "Jeonghun as an outrageously self-serious fantasy final boss; no everyday prop is needed to explain the joke."),
     Scenario("glamour_stage", "초호화 무대의 정훈", "Jeonghun owns a hilariously extravagant performance or award-show stage."),
     Scenario("reaction_remix", "사건 1초 전 리액션", "His explosive reaction and the surprising cause are caught in one frame."),
     Scenario("deadpan_absurd", "혼자만 평온한 대참사", "He stays deadpan while something astonishing happens around him."),
@@ -115,7 +115,9 @@ VISUAL_STYLES = {
 FRIEND_PHOTO_STYLE = (
     "Make the kind of image his friends would save and repost. The chosen type is a starting "
     "point, not a template: invent a fresh scene and let its strongest visual idea lead. "
-    "A candid snapshot or an extravagant fantasy edit can both work. "
+    "A candid snapshot or an extravagant fantasy edit can both work. Let an epic pose, "
+    "wild costume, huge reaction, or chaotic group moment be funny on its own; do not "
+    "add random household props to explain the joke. "
 )
 DIALOGUE_MOVES = (
     "Give an immediate, very short reaction. Leave the explanation to the photo.",
@@ -585,7 +587,8 @@ def create_idea(
             "Use the selected type as inspiration and invent freely; the image should be "
             "interesting even before reading the message. The message should sound like a "
             "natural chat reaction, not a description or narrator's caption. Keep it brief, "
-            "vary the wording, and allow casual slang when it fits. "
+            "vary the wording, avoid the repeated 'X했는데 Y' formula, and allow casual "
+            "slang when it fits. "
             "The posting window affects visible lighting only, not the activity. "
             + FRIEND_PHOTO_STYLE +
             "Keep his adult face visible and recognizable in the image. Put no dialogue, "
