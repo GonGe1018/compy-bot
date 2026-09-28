@@ -34,6 +34,7 @@ class GuildConfigurationTests(unittest.TestCase):
             discord_bot_token="test-token",
             discord_channel_id=None,
             discord_webhook_url=None,
+            operator_ids=frozenset({123456789}),
         )
 
     def test_channel_registration_is_per_server_and_can_be_paused(self):
@@ -61,7 +62,7 @@ class GuildConfigurationTests(unittest.TestCase):
         self.assertEqual(sum(getattr(item, "label", None) is not None for item in panel.children), 2)
 
     def test_whitelisted_user_can_use_commands_without_admin_permission(self):
-        allowed = SimpleNamespace(guild_id=101, user=SimpleNamespace(id=277763680022560768))
+        allowed = SimpleNamespace(guild_id=101, user=SimpleNamespace(id=123456789))
         denied = SimpleNamespace(guild_id=101, user=SimpleNamespace(id=999))
         self.assertTrue(discord_app.is_operator(allowed, self.settings))
         self.assertFalse(discord_app.is_operator(denied, self.settings))

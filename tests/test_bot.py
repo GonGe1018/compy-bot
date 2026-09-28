@@ -62,10 +62,10 @@ class ScheduleTests(unittest.TestCase):
 
     def test_operator_ids_can_be_extended_without_admin_permissions(self):
         with patch.object(bot, "ROOT", self.root), patch.dict(
-            os.environ, {"BOT_OPERATOR_IDS": "277763680022560768, 123456789"}
+            os.environ, {"BOT_OPERATOR_IDS": "123456789, 987654321"}
         ):
             settings = bot.load_settings()
-        self.assertEqual(settings.operator_ids, frozenset({277763680022560768, 123456789}))
+        self.assertEqual(settings.operator_ids, frozenset({123456789, 987654321}))
 
     def test_changed_window_replans_existing_unsent_job(self):
         day = date(2026, 9, 28)

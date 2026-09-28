@@ -259,7 +259,7 @@ class Settings:
     discord_bot_token: str | None
     discord_channel_id: str | None
     discord_webhook_url: str | None
-    operator_ids: frozenset[int] = frozenset({277763680022560768})
+    operator_ids: frozenset[int] = frozenset()
 
 
 def parse_window(name: str, value: str) -> Window:
@@ -283,7 +283,7 @@ def load_settings() -> Settings:
     quality = os.getenv("IMAGE_QUALITY", "low")
     if quality not in {"low", "medium", "high", "auto"}:
         raise ValueError("IMAGE_QUALITY must be low, medium, high, or auto")
-    operator_text = os.getenv("BOT_OPERATOR_IDS", "277763680022560768")
+    operator_text = os.getenv("BOT_OPERATOR_IDS", "")
     operator_parts = [part.strip() for part in operator_text.split(",") if part.strip()]
     if any(not part.isdecimal() for part in operator_parts):
         raise ValueError("BOT_OPERATOR_IDS must be comma-separated numeric Discord user IDs")
@@ -548,7 +548,7 @@ def create_idea(
         model=settings.prompt_model,
         reasoning={"effort": "low" if scenario.mode == "legend" else "none"},
         instructions=(
-            "Create a photo update from an adult named 이정훈 to close friends, like a "
+            "Create a photo update from an adult nicknamed 정훈 to close friends, like a "
             "KakaoTalk photo message or a personal Instagram story. Return one Korean chat "
             "message and one English image-edit prompt. The photo and message belong to "
             "the same moment, but the message must not explain the photo like a caption. "
