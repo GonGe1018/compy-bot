@@ -336,6 +336,7 @@ class Settings:
     discord_webhook_url: str | None
     operator_ids: frozenset[int] = frozenset()
     card_display_name: str = "정훈"
+    photo_references: tuple[str, ...] = ()
 
 
 def parse_window(name: str, value: str) -> Window:
@@ -383,6 +384,9 @@ def load_settings() -> Settings:
         discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
         operator_ids=frozenset(int(part) for part in operator_parts),
         card_display_name=card_display_name,
+        photo_references=tuple(
+            name.strip() for name in os.getenv("PHOTO_REFERENCES", "").split(",") if name.strip()
+        ),
     )
 
 
@@ -507,12 +511,16 @@ class JobStore:
         self.connection.close()
 
 
-def photos_for_job(count: int) -> list[Path]:
+def photos_for_job(count: int, selected_names: tuple[str, ...] = ()) -> list[Path]:
     photo_dir = ROOT / "photos"
-    photos = sorted(path for path in photo_dir.iterdir() if path.suffix.lower() in PHOTO_EXTENSIONS)
-    if not photos:
-        raise RuntimeError(f"No reference photos found in {photo_dir}")
-    return random.sample(photos, min(count, len(photos)))
+    if len(selected_names) != count or len(set(selected_names)) != count:
+        raise ValueError("PHOTO_REFERENCES must list PHOTO_COUNT distinct filenames")
+    if any(Path(name).name != name for name in selected_names):
+        raise ValueError("PHOTO_REFERENCES must contain filenames from photos/")
+    selected = [photo_dir / name for name in selected_names]
+    if any(not path.is_file() or path.suffix.lower() not in PHOTO_EXTENSIONS for path in selected):
+        raise ValueError("PHOTO_REFERENCES contains a missing or unsupported photo")
+    return selected
 
 
 def legend_concepts(client: object, settings: Settings, slot: str, scenario: Scenario) -> list[str]:
@@ -675,7 +683,9 @@ def create_idea(
             "even when the scene itself is implausible. "
             "For a public-figure cameo, make the update sound clearly playful or imagined, "
             "without asserting a real encounter or endorsement. Preserve "
-            "the recognizable adult identity from the reference photos. Put absolutely no "
+            "the recognizable adult identity from the reference photos. Let the references "
+            "define the face; do not invent a generic, younger, or beautified face in the "
+            "image prompt. Put absolutely no "
             "dialogue, captions, speech bubbles, logos, watermarks, or readable writing in the "
             "image. No screenshot, collage, trading card, poster layout, or UI overlay. "
             "Avoid humiliation, defamation, sexual content, and violence. "
@@ -719,12 +729,15 @@ def generate_meme(
         raise RuntimeError("OPENAI_API_KEY is missing from .env")
     from openai import OpenAI
 
-    references = photos_for_job(settings.photo_count)
+    references = photos_for_job(settings.photo_count, settings.photo_references)
     client = OpenAI(api_key=settings.openai_key)
     dialogue, prompt = create_idea(client, settings, slot, previous, scenario, style, trend_mode)
     prompt += (
-        " Use the supplied photo(s) as identity references for the SAME person. Preserve the "
-        "recognizable face, facial features, skin tone, and hairstyle. Depict their present-day "
+        " The supplied images show the SAME adult person. Image 1 is the "
+        "primary identity anchor: keep its specific facial proportions, eyes, nose, mouth, "
+        "jawline, skin texture, and overall likeness. If Image 2 is present, use it only to "
+        "cross-check identity from another angle, never to average the two faces into a new "
+        "generic face. Preserve the recognizable face and skin tone. Depict their present-day "
         "adult appearance without making them look younger. Make one coherent photo "
         "that feels like something he would share with friends. His face and the visual punchline "
         "should both read clearly on a small phone screen. Do not force the neutral expression "
@@ -735,6 +748,7 @@ def generate_meme(
         "Show the central comic event exactly as described, with enough scale and contrast to "
         "read at thumbnail size; do not shrink it into a minor background detail or replace "
         "his specified expression with a neutral pose. "
+        "Do not beautify, smooth, slim, enlarge, or otherwise redesign facial features. "
         "The original clothing, accessories, "
         "and background are optional and should change when the new scene calls for it. "
         "No words, dialogue, captions, speech bubbles, logos, or watermarks anywhere in the image."

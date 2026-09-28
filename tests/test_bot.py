@@ -60,6 +60,23 @@ class ScheduleTests(unittest.TestCase):
         with patch.dict(os.environ, {"BOT_DATA_DIR": str(target)}):
             self.assertEqual(bot.data_dir(), target.resolve())
 
+    def test_explicit_reference_pair_uses_only_named_photos_in_order(self):
+        folder = self.root / "photos"
+        folder.mkdir()
+        for name in ("first.jpg", "second.jpg", "other.png"):
+            (folder / name).write_bytes(b"photo")
+        with patch.object(bot, "ROOT", self.root):
+            self.assertEqual(
+                [path.name for path in bot.photos_for_job(2, ("second.jpg", "first.jpg"))],
+                ["second.jpg", "first.jpg"],
+            )
+            with self.assertRaises(ValueError):
+                bot.photos_for_job(2, ("first.jpg", "missing.jpg"))
+            with self.assertRaises(ValueError):
+                bot.photos_for_job(2, ("first.jpg", "first.jpg"))
+            with self.assertRaises(ValueError):
+                bot.photos_for_job(2)
+
     def test_operator_ids_can_be_extended_without_admin_permissions(self):
         with patch.object(bot, "ROOT", self.root), patch.dict(
             os.environ, {"BOT_OPERATOR_IDS": "123456789, 987654321"}
@@ -221,6 +238,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(destination.read_bytes(), image_bytes)
         self.assertEqual(client.images.edit.call_args.kwargs["image"][0].name, str(first))
         self.assertEqual(client.images.edit.call_args.kwargs["image"][1].name, str(second))
+        self.assertIn("Image 1 is the primary identity anchor", client.images.edit.call_args.kwargs["prompt"])
 
     def test_scenario_does_not_repeat_recent_categories(self):
         recent = [scenario.key for scenario in bot.SCENARIOS[:4]]
