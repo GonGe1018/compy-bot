@@ -248,11 +248,11 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(dialogue, "와 이게 되네 ㅋㅋ")
         self.assertEqual(destination.read_bytes(), image_bytes)
         self.assertEqual(received, [
-            ("reference-1.png", "PNG", "RGB", (2048, 1152)),
-            ("reference-2.png", "PNG", "RGB", (800, 600)),
+            ("reference-1.png", "PNG", "RGB", (1638, 2048)),
+            ("reference-2.png", "PNG", "RGB", (480, 600)),
         ])
         self.assertEqual((first.stat().st_size, second.stat().st_size), original_sizes)
-        self.assertIn("Image 1 is the primary identity anchor", client.images.edit.call_args.kwargs["prompt"])
+        self.assertIn("Image 1 is the main identity", client.images.edit.call_args.kwargs["prompt"])
 
     def test_scenario_does_not_repeat_recent_categories(self):
         recent = [scenario.key for scenario in bot.SCENARIOS[:4]]
@@ -286,7 +286,7 @@ class ScheduleTests(unittest.TestCase):
         request = client.responses.create.call_args.kwargs
         self.assertIn(scenario.name, request["input"])
         self.assertIn("no dialogue, captions", request["instructions"])
-        self.assertIn("visible reason friends would laugh", request["instructions"])
+        self.assertIn("image should be interesting", request["instructions"])
 
     def test_legend_idea_brainstorms_three_concepts_then_refines_one(self):
         client = Mock()
@@ -307,7 +307,7 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(client.responses.create.call_count, 2)
         final_request = client.responses.create.call_args.kwargs
         self.assertIn("Three candidate comedy concepts", final_request["input"])
-        self.assertIn("camera angle and distance", final_request["instructions"])
+        self.assertIn("daily legend attempt", final_request["instructions"])
 
     def test_trend_candidates_require_fresh_lighthearted_meme_signal(self):
         feed = """<rss><channel>

@@ -686,6 +686,7 @@ class JunghoonCommands(app_commands.Group):
             app_commands.Choice(name="일상적인 사진", value="natural"),
             app_commands.Choice(name="대놓고 웃긴 사진", value="bold"),
             app_commands.Choice(name="초현실적인 사진", value="surreal"),
+            app_commands.Choice(name="과몰입 판타지·무대", value="cinematic"),
         ],
         시간대=[
             app_commands.Choice(name="낮 (11:30~13:30)", value="lunch"),
